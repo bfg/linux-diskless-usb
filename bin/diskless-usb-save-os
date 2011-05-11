@@ -1,0 +1,516 @@
+#!/bin/bash
+
+#
+# WHAT: USB-key backup script
+# AUTHOR: Brane F. Gracnar
+#
+
+#######################################################
+#         diskless-usb-save-os configuration          #
+#######################################################
+
+# Directory to backup. Normally you want
+# to backup entire root directory...
+#
+# Type: string
+# Default: "/"
+ROOT_DIR="/"
+
+# Temporary mount directory
+# If it does not exist, it is
+# going to be created
+#
+# Type: string
+# Default: "/mnt/usbkey"
+MNT_DIR="/mnt/usbkey"
+
+# Run filesystem check before mounting
+# filesystem?
+#
+# Type: boolean
+# Default: 0
+FSCK=0
+
+# Update bootloader configuration?
+# 
+# Type: boolean
+# Default: 1
+BOOTLOADER_UPDATE="1"
+
+# Bootloader device name
+# This device holds bootloader configuration
+# file
+#
+# Type: string
+# Default: ""
+BOOTLOADER_DEV=""
+
+# Bootloader installation device
+# On this device bootloader is going
+# to be installed.
+#
+# Type: string
+# Default: ""
+BOOTLOADER_INSTALL_DEV=""
+
+# Path to syslinux.cfg template file
+#
+# Type: string
+# Default: "/etc/linux-usb-diskless/syslinux.cfg.template"
+BOOTLOADER_CFG_TEMPLATE="/etc/linux-usb-diskless/syslinux.cfg.template"
+
+# Update bootloader configuration?
+# 
+# Type: boolean
+# Default: 1
+ARCHIVE_UPDATE="1"
+
+# Archive mount device
+#
+# Type: string
+# Default: ""
+ARCHIVE_DEV=""
+
+# Archive storage directory
+# This directory is relative
+# to $ARCHIVE_DEV setting
+# 
+# Type: string
+# Default: /os-images
+ARCHIVE_DIR="/os-images"
+
+# File containing tar exclude patterns
+#
+# Type: string
+# Default: ""
+ARCHIVE_EXCLUDE_FILE=""
+
+# Created OS archive name
+#
+# Type: string
+# Default: "os"
+ARCHIVE_NAME="os"
+
+# Prepend system hostname to the
+# archive name?
+#
+# Type: boolean
+# Default: 1
+ARCHIVE_PREPEND_HOSTNAME=1
+
+# Maximum number of OS archive files
+# to maintain on $ARCHIVE_DEV; oldest files will
+# be removed. Set this to 0 to disable old archive
+# removal
+#
+# Type: integer
+# Default: 8
+ARCHIVE_MAX_NUM="8"
+
+# Rsync location of used to copy
+# freshly created OS archive.
+# If this variable is empty, no copying
+# will be done.
+#
+# Type: string
+# Default: ""
+ARCHIVE_BACKUP_LOC=""
+
+# I'm fucking sure mode
+#
+# When this setting is set to 1, script
+# won't ask for action confirmations anymore...
+#
+# It VERY RECOMMENDED to leave this setting
+# at it's default
+#
+# Type: boolean
+# Default: 0
+SURE=0
+
+# In order to "validate" this configuration file,
+# comment out the following line
+
+#######################################################
+#                     FUNCTIONS                       #
+#######################################################
+MYNAME=$(basename "$0")
+VERSION="0.15"
+ARCHIVE_ID=""
+REAL_ARCHIVE_NAME=""
+HOSTNAME=$(hostname)
+
+tty_colors_init() {
+	# don't set color codes if we're not
+	# connected to tty...
+	test ! -t 1 -o ! -t 2 && return 0
+
+	# SHELL color codes
+	TERM_WHITE="\033[1;37m"
+	TERM_YELLOW="\033[1;33m"
+	TERM_LPURPLE="\033[1;35m"
+	TERM_LRED="\033[1;31m"
+	TERM_LCYAN="\033[1;36m"
+	TERM_LGREEN="\033[1;32m"
+	TERM_LBLUE="\033[1;34m"
+	TERM_DGRAY="\033[1;30m"
+	TERM_GRAY="\033[0;37m"
+	TERM_BROWN="\033[0;33m"
+	TERM_PURPLE="\033[0;35m"
+	TERM_RED="\033[0;31m"
+	TERM_CYAN="\033[0;36m"
+	TERM_GREEN="\033[0;32m"
+	TERM_BLUE="\033[0;34m"
+	TERM_BLACK="\033[0;30m"
+	TERM_BOLD="\033[40m\033[1;37m"
+	TERM_RESET="\033[0m"
+}
+
+is_sure() {
+	if [ "${SURE}" = "1" ]; then
+		# msg_warn "\$SURE is set to YES, returning success."
+		return 0
+	fi
+
+	local default="$1"
+	local yn_str=""
+	test -z "${default}" && default=1
+	if [ "${default}" = "0" ]; then
+		yn_str="Y/n"
+	else
+		yn_str="y/N"
+	fi
+
+	local r=""
+	echo -ne "${TERM_YELLOW}WARNING:${TERM_RESET} Are you sure? [${yn_str}]: "
+	read r
+
+	if [ -z "${r}" ]; then
+		return ${default}
+	elif [ "${r}" = "y" -o "${r}" = "Y" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+msg_info() {
+	logger -i "$MYNAME info: $@"
+	echo -e "${TERM_BOLD}INFO   :${TERM_RESET} $@ ${TERM_RESET}"
+}
+
+msg_warn() {
+	logger -i "$MYNAME warn: $@"
+	echo -e "${TERM_YELLOW}WARNING:${TERM_RESET} $@ ${TERM_RESET}"
+}
+
+msg_err() {
+	logger -i "$MYNAME error: $@"
+	echo -e "${TERM_LRED}ERROR  :${TERM_RESET} $@ ${TERM_RESET}"
+}
+
+
+die() {
+	msg_err "$@"
+	umount "${MNT_DIR}" > /dev/null 2>&1
+	exit 1
+}
+
+printhelp() {
+	cat <<EOF
+Usage$: ${MYNAME} [OPTIONS]
+
+This script creates FULL operating system backup
+stores it on in configuration file specified device
+and optionally updates bootloader configuration.
+
+OPTIONS:
+
+  -c  --config=FILE        Loads specified configuration file.
+  -d  --default-config     Prints out default configuration file
+
+  -V  --version            Prints script version
+  -h  --help               This help message
+EOF
+}
+
+config_load() {
+	if [ ! -f "${1}" ]; then
+		Error="Configuration file '${1}' does not exist."
+		return 1
+	elif ! source "${1}"; then
+		Error="Error parsing configuration file '${1}'."
+		return 1
+	fi
+
+	return 0
+}
+
+config_default_print() {
+	cat $0 | head -n 131 | tail -n 124
+	echo "ive_been_lazy_and_ihavent_edited_default_config_file"
+	echo ""
+	echo "# EOF"
+}
+
+archive_cleanup() {
+	# is this feature disabled?
+	test "${ARCHIVE_MAX_NUM}" = "0" && return 0
+
+	local dir="${1}"
+	local prefix="${2}"
+	local files=""
+	local n_files=0
+	local can_rm=""
+	local can_un=""
+	msg_info ""
+	msg_info "Cleaning up archive directory '${dir}'."
+	msg_info ""
+	(
+		cd "${dir}" || die "Unable to enter directory '${dir}'"
+		
+		files="`ls *${prefix}*.tbz 2>/dev/null`"
+		
+		# if no files were found, we have nothing
+		# clean up
+		test -z "${files}" && return 0
+		
+		# check how many files
+		n_files=$(echo "${files}" | wc -l)
+		local n_rem=$((n_files - ${ARCHIVE_MAX_NUM}))
+		
+		# is there is to few archives for cleanup?
+		test ${n_files} -lt ${ARCHIVE_MAX_NUM} && return 0
+
+		local f=""
+		local i=0
+		for f in ${files}; do
+			i=$((i + 1))
+			if [ $i -le ${n_rem} ]; then
+				can_rm="${can_rm} $f"
+			else
+				can_un="${can_un} $f"
+			fi
+		done
+		
+		test -z "${can_rm}" && return 0
+
+		msg_warn "Found ${TERM_LRED}${n_files}${TERM_RESET} archives in ${dir}."
+		msg_warn "Maximum number of archive files is set to ${TERM_LRED}${ARCHIVE_MAX_NUM}${TERM_RESET}."
+		msg_warn ""
+		msg_warn "The following archives are going to be deleted:"
+		msg_warn ""
+		msg_warn "${TERM_LRED}${can_rm}${TERM_RESET}"
+		msg_warn ""
+		msg_warn "The following archived will be left untouched:"
+		msg_warn ""
+		msg_warn "${TERM_LGREEN}${can_un}${TERM_RESET}"
+		echo ""
+
+		# remove files
+		for f in ${can_rm}; do
+			msg_warn "Removing file '${TERM_LRED}${f}${TERM_RESET}'"
+			is_sure && rm -vf ${f}*
+		done
+		echo ""
+	)
+
+	return 0;
+}
+
+check_mntdir() {
+	if [ ! -e "${1}" -o ! -d "${1}" ]; then
+		rm -f "${1}" >/dev/null 2>&1
+		mkdir -p "${1}" || die "Unable to create non-existing mount directory '${1}'."
+	fi
+	return 0
+}
+
+fs_mount() {
+	local dev="${1}"
+	local dir="${2}"
+
+	if [ "${FSCK}" = "1" ]; then
+		msg_info "Running filesystem check on device '${TERM_LRED}${dev}${TERM_RESET}'."
+		echo ""
+		fsck "${dev}"
+		echo ""
+	fi
+	# mount the goddamn device
+	check_mntdir "${dir}"
+	mount -o rw,noatime "${dev}" "${dir}" || die "Unable to mount '${dev}' to '${dir}'."
+	
+	return 0
+}
+
+backup_os() {
+	if [ "${ARCHIVE_UPDATE}" = "0" ]; then
+		msg_warn "Operating system backup creation is disabled."
+		return 0
+	fi
+
+	echo ""
+	echo -e "${TERM_YELLOW}#######################################################${TERM_RESET}"
+	echo -e "${TERM_YELLOW}#       CREATING OPERATING SYSTEM FULL BACKUP         #${TERM_RESET}"
+	echo -e "${TERM_YELLOW}#######################################################${TERM_RESET}"
+	echo ""
+
+	test -z "${ARCHIVE_DEV}" && die "Archive device is not defined."
+	test ! -d "${ROOT_DIR}" && die "Directory '${ROOT_DIR}' is invalid."
+
+	# compute variables
+	ARCHIVE_ID=$(date +'%Y%m%d-%H%M%S')
+	#REAL_ARCHIVE_NAME="${ARCHIVE_NAME}.${ARCHIVE_ID}.tbz"
+	REAL_ARCHIVE_NAME="${ARCHIVE_NAME}.${ARCHIVE_ID}.tgz"
+
+	# optionally prepend hostname to real archive name
+	test "${ARCHIVE_PREPEND_HOSTNAME}" = "1" && REAL_ARCHIVE_NAME="${HOSTNAME}.${REAL_ARCHIVE_NAME}"
+	local f="${MNT_DIR}/${ARCHIVE_DIR}/${REAL_ARCHIVE_NAME}"
+
+	f=$(echo "${f}" | sed -e 's/\/\//\//g')
+
+	msg_info "Mounting archive storage device '${TERM_LRED}${ARCHIVE_DEV}${TERM_RESET}' to '${TERM_YELLOW}${MNT_DIR}${TERM_RESET}'."
+	! is_sure && die "User is not sure to mount archive device ${ARCHIVE_DEV} to ${MNT_DIR}."
+
+	fs_mount "${ARCHIVE_DEV}" "${MNT_DIR}"
+	
+	if [ ! -e "${MNT_DIR}/${ARCHIVE_DIR}" -o ! -d "${MNT_DIR}/${ARCHIVE_DIR}" ]; then
+		msg_warn "Creating missing archive directory '${TERM_YELLOW}${MNT_DIR}/${ARCHIVE_DIR}${TERM_RESET}'."
+		rm -f "${MNT_DIR}/${ARCHIVE_DIR}" >/dev/null 2>&1
+		mkdir -p "${MNT_DIR}/${ARCHIVE_DIR}" || die "Unable to create directory '${MNT_DIR}/${ARCHIVE_DIR}'."
+	fi
+
+	# hm, check if 
+	archive_cleanup "${MNT_DIR}/${ARCHIVE_DIR}" "${ARCHIVE_NAME}"
+
+	# run archiver
+	msg_info "Creating OS package tarball '${TERM_LGREEN}${f}${TERM_RESET}'."
+	
+	local tar_opt=""
+	test -f "${ARCHIVE_EXCLUDE_FILE}" && tar_opt="-X ${ARCHIVE_EXCLUDE_FILE}"
+	
+	(
+		cd / || die "Unable to chdir /"
+		#tar --one-file-system ${tar_opt} -cjpf "${f}" "${ROOT_DIR}" /dev/console /dev/null 2>&1 || die "Unable to create OS package tarball."
+		tar --one-file-system ${tar_opt} -czpf "${f}" "${ROOT_DIR}" /dev/console /dev/null 2>&1 || die "Unable to create OS package tarball."
+		echo ""
+	)
+	# sync buffers
+	sync
+
+	local md5=$(md5sum "${f}" | awk '{print $1}')
+	msg_info "MD5 digest of ${REAL_ARCHIVE_NAME} is '${TERM_YELLOW}${md5}${TERM_RESET}'."
+	msg_info "Writing MD5 digest to '${f}.md5'"
+	echo "${md5}" > "${f}.md5"
+
+	# copy tarball to safe location
+	if [ ! -z "${ARCHIVE_BACKUP_LOC}" ]; then
+		msg_info ""
+		msg_info "Creating backup of archive to '${TERM_LGREEN}${ARCHIVE_BACKUP_LOC}${TERM_RESET}'"
+		msg_info ""
+		echo ""
+		rsync -avzp ${f}* "${ARCHIVE_BACKUP_LOC}"
+		echo ""
+		echo ""
+	fi
+
+	msg_info "Unmounting archive storage device '${TERM_LRED}${ARCHIVE_DEV}${TERM_RESET}' from '${TERM_YELLOW}${MNT_DIR}${TERM_RESET}'."
+	umount "${MNT_DIR}" || die "Unable to umount ${ARCHIVE_DEV} from ${MNT_DIR}."
+
+	# this is it...
+	return 0
+}
+
+bootloader_update() {
+	echo ""
+	echo -e "${TERM_YELLOW}#######################################################${TERM_RESET}"
+	echo -e "${TERM_YELLOW}#     UPDATING SYSLINUX BOOTLOADER CONFIGURATION       #${TERM_RESET}"
+	echo -e "${TERM_YELLOW}#######################################################${TERM_RESET}"
+	echo ""
+
+	SYSLINUX_CFG="/syslinux.cfg"
+
+	local syslinux_cfg="${MNT_DIR}/${SYSLINUX_CFG}"
+
+	# additional opt
+
+	# run updater script
+	diskless-usb-create-syslinux-config ${opt} \
+		-d "${MNT_DIR}/${ARCHIVE_DIR}" \
+		-o "${syslinux_cfg}"
+}
+
+run_it() {
+	test -z "${MNT_DIR}" && die "Mount directory is not specified."
+
+	# create OS backup
+	backup_os
+	
+	# update boot loader configuration
+	bootloader_update
+	
+	msg_info ""
+	msg_info "ALL DONE."
+	msg_info ""
+}
+
+ive_been_lazy_and_ihavent_edited_default_config_file() {
+	echo ""
+	echo -e "${TERM_BOLD}     HA, HA, HA ${TERM_LRED}*** BUSTED ***${TERM_RESET} ${TERM_BOLD}HA, HA, HA,${TERM_RESET}"
+	echo ""
+	echo "You didn't edit default configuration file, did you? ;)"
+	echo ""
+	exit 1
+}
+
+#######################################################
+#                        MAIN                         #
+#######################################################
+
+# PATH
+PATH=${PATH}:/sbin:/usr/sbin:/usr/local/sbin:$(dirname "$0"):.
+
+# initialize shell colors
+tty_colors_init
+
+TEMP=$(getopt -o c:dVh --long config:,default-config,version,help -n "$MYNAME" -- "$@")
+test "$?" != "0" && die "Command line parsing error."
+eval set -- "$TEMP"
+while true; do
+	case $1 in
+		-c|--config)
+			config_load "${2}" || die "Unable to load config file: $Error"
+			shift 2
+			;;
+		-d|--default-config)
+			config_default_print
+			exit 0
+			;;
+		-V|--version)
+			echo "$MYNAME $VERSION"
+			exit 0
+			;;
+		-h|--help)
+			printhelp
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		*)
+			echo "Invalid command line. Run $MYNAME --help for instructions" 1>&2
+			exit 1
+			;;
+	esac
+done
+
+
+msg_info "Starting ${TERM_LRED}$MYNAME${TERM_RESET} version ${TERM_YELLOW}$VERSION${TERM_RESET}."
+
+# run the devil...
+run_it
+
+exit 0
+
+# EOF

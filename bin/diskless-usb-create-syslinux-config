@@ -1,0 +1,424 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use IO::File;
+use IO::Handle;
+use Getopt::Long;
+use Sys::Hostname;
+use File::Basename;
+use POSIX qw(strftime);
+use File::Glob qw(:glob);
+
+#######################################################
+#                      GLOBALS                        #
+#######################################################
+
+my $menu_enabled = 1;
+my $archive_dir = undef;
+my $archive_pattern = '*.{tgz,tar.gz,tbz,tar.bz2,dat}';
+my $out = undef;
+
+#######################################################
+#                     FUNCTIONS                       #
+#######################################################
+my $MYNAME = basename($0);
+my $VERSION = '0.10';
+my $Error = '';
+
+my $_template = template_cfg_default();
+my $_template_label = template_label_default();
+my $_label_cnt = 0;
+
+sub my_die {
+	print STDERR "ERROR: ", join('', @_), "\n";
+	exit 1;
+}
+
+sub file_read {
+	my ($file) = @_;
+	my $fd = IO::File->new($file, 'r');
+	unless (defined $fd) {
+		$Error = "Unable to open file $file for reading: $!";
+		return undef;
+	}
+	
+	my $buf = '';
+	while (<$fd>) { $buf .= $_; }
+	return $buf;
+}
+
+sub file_write {
+	my ($buf, $file) = @_;
+	my $fd = undef;
+	if (! defined $file || $file eq '-') {
+		$fd = IO::Handle->new();
+		unless ($fd->fdopen(fileno(STDOUT), 'w')) {
+			$Error = "Unable to open stdout for writing: $!";
+		}
+	} else {
+		$fd = IO::File->new($file, 'w');
+		unless (defined $fd) {
+			$Error = "Unable to open file $file for writing: $!";
+		}
+	}
+	return 0 unless (defined $fd);
+
+	# write it...
+	return print $fd $buf;
+}
+
+sub template_cfg_load {
+	my ($file) = @_;
+	my $buf = file_read($file);
+	unless (defined $buf) {
+		$Error = "Unable to read syslinux.cfg template: $Error";
+		return 0;
+	}
+	$_template = $buf;
+	return 1;
+}
+
+sub template_cfg_get {
+	my $s = $_template;
+	
+	# menus disabled?
+	unless ($menu_enabled) {
+		my @tmp = ();
+		foreach (split(/[\r\n]/, $s)) {
+			next if ($_ =~ m/^\s*UI\s+/i);
+			next if ($_ =~ m/^\s*MENU\s+/i);
+			push(@tmp, $_);
+		}
+		$s = join("\n", @tmp) . "\n";
+	}
+	
+	return $s;
+}
+
+sub template_cfg_rewrite {
+	my ($str) = @_;
+	my @tmp = ();
+	foreach (split(/[\r\n]/, $str)) {
+		
+	}
+	
+	return join("\n", @tmp) . "\n";
+}
+
+sub template_cfg_default {
+	return <<EOF
+#
+# syslinux.cfg configuration
+#
+
+# Metadata
+\${METADATA}
+
+###### BEGIN: Menu configuration ######
+UI syslinux/vesamenu.c32
+
+MENU TITLE Diskless Linux boot
+MENU ROWS 16
+MENU TIMEOUTROW 22
+MENU TABMSGROW 24
+MENU CMDLINEROW 24
+MENU HELPMSGROW 26
+MENU WIDTH 78
+MENU MARGIN 6
+MENU BACKGROUND #c00090f0
+
+MENU color title    1;31;40    #FFFF0000 #00000000 std
+MENU color sel      7;37;40    #FF000000 #FFC0C0C0 all
+MENU color unsel    37;44      #FF000000 #00000000 none
+MENU color hotsel   1;7;37;40  #FF000000 #FFC0C0C0 all
+MENU color tabmsg   1;31;40    #FFFFFF00 #00000000 std
+MENU color help     1;31;40    #FFFFFFFF #00000000 none
+###### END: Menu configuration ######
+
+###### BEGIN: Defaults, timeouts ######
+
+# Available variables:
+#
+# \${INDEX_FIRST}:     index of first computed label section
+# \${INDEX_LAST}:      index of last computed label section
+
+PROMPT 0
+TIMEOUT 100
+
+# ONTIMEOUT rescuecd_std
+MENU DEFAULT linux-\${INDEX_FIRST}
+DEFAULT linux-\${INDEX_FIRST}
+
+###### END: Defaults, timeouts ######
+
+###### BEGIN: Boot labels ######
+
+# \${DISCOVERED_ARCHIVE_LABELS} is replaced with
+# LABEL sections computed from list of found
+# operating system images found in directory specified
+# with --os-archive-dir switch
+#
+# Each found archive will be converted into single
+# LABEL section which will be computed from label template;
+# see --label-template and --default-label-template command
+# line options.
+#
+# Default label order is DESCENDING ASCII sort, if you
+# want ascending ASCII sort, use variable \${DISCOVERED_ARCHIVE_LABELS_ASC}
+
+\${DISCOVERED_ARCHIVE_LABELS}
+
+# some static labels
+# LABEL failback
+#	MENU LABEL Failback OS image
+#	kernel kernels/vmlinuz-2.6.35-28.49-p9-01
+#	initrd kernels/initrd.igz
+#	append ro tmpfs_size=900M real_root=:/images/failback.tgz vga=791
+
+###### END: Boot labels ######
+
+# EOF
+EOF
+;
+}
+
+sub template_label_default {
+	return <<EOF
+# Available variables:
+#
+# \${ARCHIVE_FILE}:        OS archive file basename
+# \${ARCHIVE_FILE_FULL}:   OS archive file full name
+# \${INDEX}:               OS archive index number
+
+LABEL linux-\${INDEX}
+	MENU LABEL [\${INDEX}] OS \${ARCHIVE_FILE}
+	kernel kernels/vmlinuz-2.6.35-28.49
+	initrd kernels/initrd.igz
+	append ro tmpfs_size=500M vga=791 real_root=:/images/\${ARCHIVE_FILE}
+EOF
+;
+}
+
+sub template_label_load {
+	my ($file) = @_;
+	my $buf = file_read($file);
+	unless (defined $buf) {
+		$Error = "Unable to read syslinux.cfg LABEL template: $Error";
+		return 0;
+	}
+	$_template_label = $buf;
+	return 1;
+}
+
+sub template_label_get {
+	my $render = shift;
+	my $s = $_template_label;
+
+	my @tmp = ();
+	foreach (split(/[\r\n]/, $s)) {
+		# remove comments
+		next if ($render && $_ =~ m/^\s*#/);
+		unless ($menu_enabled) {
+			next if ($_ =~ m/^\s*UI\s+/i);
+			next if ($_ =~ m/^\s*MENU\s+/i);
+		}
+		push(@tmp, $_);
+	}
+
+	return join("\n", @tmp) . "\n";
+	
+	# menus disabled?
+	unless ($menu_enabled) {
+		my @tmp = ();
+		foreach (split(/[\r\n]/, $s)) {
+			next if ($_ =~ m/^\s*UI\s+/i);
+			next if ($_ =~ m/^\s*MENU\s+/i);
+			push(@tmp, $_);
+		}
+		$s = join("\n", @tmp) . "\n";
+	}
+	
+	return $s;
+}
+
+sub metadata_get {
+	my $host = hostname();
+	my $date = strftime("%Y/%m/%d %H:%M:%S", localtime(time()));
+	return <<EOF
+#
+# Generated by: $MYNAME/$VERSION
+# Date: $date
+# Host: $host
+#
+EOF
+;
+}
+
+sub label_render {
+	my ($file) = @_;
+	my $bfile = basename($file);
+	
+	my $result = template_label_get(1);
+
+	# rewrite template
+	$result =~ s/\${INDEX}/$_label_cnt/gm;
+	$result =~ s/\${ARCHIVE_FILE}/$bfile/gm;
+	$result =~ s/\${ARCHIVE_FILE_FULL}/$bfile/gm;
+	
+	return $result;
+}
+
+sub render_labels {
+	my ($dir, $patt, $asc) = @_;
+	$dir = $archive_dir unless (defined $archive_dir);
+	$patt = $archive_pattern unless (defined $patt);
+	$asc = 0 unless (defined $asc);
+
+	# discover files
+	my $files = archive_discover($dir, $patt);
+	return undef unless (defined $files);
+	
+	$_label_cnt = 0;
+
+	# ascending
+	if ($asc) {
+		@{$files} = sort(@{$files});
+	} else {
+		@{$files} = sort { $b cmp $a } @{$files};
+	}
+	
+	# render labels
+	my $res = '';
+	map {
+		$_label_cnt++;
+		$res .= label_render($_);
+	} @{$files};
+	
+	return $res;
+}
+
+sub archive_discover {
+	my ($dir, $pattern) = @_;
+	my $p = $dir . '/' . $pattern;
+	my @list = bsd_glob($p, GLOB_BRACE);
+	if (GLOB_ERROR) {
+		$Error = "Error discovering OS archives: $!";
+		return undef;
+	}
+	
+	return [ @list ];
+}
+
+sub run {
+	my $labels = render_labels($archive_dir, $archive_pattern);
+	my $index_first = ($_label_cnt > 0) ? 1 : 0;
+	my $index_last = ($_label_cnt > 0) ? $_label_cnt : 0;
+	my $labels_asc = render_labels($archive_dir, $archive_pattern, 1);
+	my $metadata = metadata_get();
+
+	my @tmp = ();
+	foreach (split(/[\r\n]/, template_cfg_get())) {
+		# do rewrites on non-comment lines...
+		unless ($_ =~ m/^\s*#/) {
+			$_ =~ s/\${METADATA}/$metadata/gm;
+			$_ =~ s/\${DISCOVERED_ARCHIVE_LABELS}/$labels/gm;
+			$_ =~ s/\${DISCOVERED_ARCHIVE_LABELS_ASC}/$labels_asc/gm;
+			$_ =~ s/\${INDEX_FIRST}/$index_first/gm;
+			$_ =~ s/\${INDEX_LAST}/$index_last/gm;
+		}
+		push(@tmp, $_);
+	}
+
+	# construct final buffer
+	my $buf = join("\n", @tmp);
+
+	# write buffer
+	return file_write($buf, $out);
+}
+
+sub printhelp {
+	print <<EOF
+Usage: $MYNAME [OPTIONS]
+
+This scripts scans specified directory for operating system
+archives and updates syslinux bootloader configuration.
+
+OPTIONS:
+
+  -t  --template=FILE           Syslinux.cfg template file
+      --default-template        Prints default syslinux.cfg template
+  
+  -l  --label-template=FILE     Syslinux LABEL section template file
+      --default-label-template  Prints default sysctl LABEL section template
+  
+  -d  --os-archive-dir=DIR      Full path to OS archive directory
+  -g  --archive-glob=PATTERN    OS archive file glob(3) pattern
+                                (Default: '$archive_pattern')
+                                
+  -o  --output=FILE             Computed syslinux.cfg configuration
+                                output file path. If omitted, output
+                                will be written to stdout.
+      
+      --no-menu                 Don't use syslinux menus
+
+  -V  --version                 Prints script version
+  -h  --help                    This help message
+
+EXAMPLES:
+
+ $MYNAME -d /mnt/usbkey/images
+ 
+ $MYNAME -t /tmp/syslinux.cfg.template -d /mnt/usbkey/images
+
+EOF
+;
+}
+#######################################################
+#                        MAIN                         #
+#######################################################
+
+# parse command line
+Getopt::Long::Configure('bundling', 'gnu_compat');
+my $r = GetOptions(
+	't|template=s' => sub {
+		my_die($Error) unless (template_cfg_load($_[1]));
+	},
+	'default-template' => sub {
+		print template_cfg_get(); exit 0;
+	},
+	'l|label-template=s' => sub {
+		my_die($Error) unless (template_label_load($_[1]));
+	},
+	'default-label-template' => sub {
+		print template_label_get(); exit 0;
+	},
+	'd|os-archive-dir=s' => \ $archive_dir,
+	'o|output=s' => \ $out,
+	'menu!' => \ $menu_enabled,
+	'V|version' => sub {
+		printf("%s %s\n", $MYNAME, $VERSION);
+		exit 0;
+	},
+	'h|help' => sub {
+		printhelp();
+		exit 0;
+	}
+);
+
+unless ($r) {
+	my_die("Invalid command line options. Run $MYNAME --help for help.");
+}
+
+# check directory
+unless (defined $archive_dir && -d $archive_dir && -r $archive_dir) {
+	no warnings;
+	my_die("Undefined or invalid archive directory: '$archive_dir'.");
+	exit 1;
+}
+
+# fire in the hole!
+exit(! run());
+
+# EOF
