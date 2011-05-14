@@ -5,6 +5,7 @@ use warnings;
 
 use IO::File;
 use IO::Handle;
+use File::Spec;
 use Getopt::Long;
 use Sys::Hostname;
 use File::Basename;
@@ -16,8 +17,10 @@ use File::Glob qw(:glob);
 #######################################################
 
 my $menu_enabled = 1;
-my $archive_dir = undef;
 my $archive_pattern = '*.{tgz,tar.gz,tbz,tar.bz2,dat}';
+my $label_check = 1;
+my $usb_dir = '/mnt/usbkey';
+my $dir_archive = 'os-images';
 my $out = undef;
 
 #######################################################
@@ -270,9 +273,102 @@ sub label_render {
 	return $result;
 }
 
+sub label_check {
+	my ($str, $file) = @_;
+
+	# checking disabled?
+	return 1 unless ($label_check);
+	
+	unless (defined $file) {
+		$Error = "Undefined archive file.";
+		return 0;
+	}
+	$file = basename($file);
+	
+	my $err = "Label sanity check for archive file $file failed: ";
+	
+	my $kernel_ok = 0;
+	my $initrd_ok = 0;
+	my $root_ok = 0;
+
+	# check line by line...
+	foreach my $l (split(/[\r\n]/, $str)) {
+		# comment?
+		next if ($l =~ m/^\s*#/ || length($l) < 1);
+
+		# check kernel...
+		if ($l =~ m/\s*kernel\s+([^\s]+)/i) {
+			my $kernel = $1;
+			# must be specified
+			unless (defined $kernel && length($kernel) > 0) {
+				$Error = $err . "Undefined or zero-length kernel specification.";
+				return 0;
+			}
+			# must be proper file
+			my $file = File::Spec->catfile($usb_dir, $kernel);
+			unless (-f $file && -r $file) {
+				$Error = $err . "Non existing or unreadable kernel file: [$usb_dir/]$kernel";
+				return 0;
+			}
+			$kernel_ok = 1;
+		}
+		
+		# check initrd
+		if ($l =~ m/\s*initrd\s+([^\s]+)/i) {
+			my $initrd = $1;
+			# must be specified
+			unless (defined $initrd && length($initrd) > 0) {
+				$Error = $err . "Undefined or zero-length initrd specification.";
+				return 0;
+			}
+	
+			# must be proper file
+			my $file = File::Spec->catfile($usb_dir, $initrd);
+			unless (-f $file && -r $file) {
+				$Error = $err . "Non existing or unreadable initrd file: [$usb_dir/]$initrd";
+				return 0;
+			}
+			$initrd_ok = 1;
+		}
+
+		# check real_root
+		if ($l =~ m/\s*(?:real_)?root=\s*([^:]+)?:([^\s]+)/i) {
+			my $dev = $1;
+			my $root = $2;
+			# must be specified
+			unless (defined $root && length($root) > 0) {
+				$Error = $err . "Undefined or zero-length real_root specification.";
+				return 0;
+			}
+			# check archive...
+			my $file = File::Spec->catfile($usb_dir, $root);
+			unless (-f $file && -r $file) {
+				$Error = $err . "Non existing or unreadable real_root archive: [$usb_dir/]$root";
+				return 0;
+			}
+			$root_ok = 1;
+		}
+	}
+	
+	unless ($kernel_ok) {
+		$Error = $err . "Missing kernel specification.";
+		return 0;
+	}
+	unless ($initrd_ok) {
+		$Error = $err . "Missing initrd specification.";
+		return 0;
+	}
+	unless ($root_ok) {
+		$Error = $err . "Missing real_root specification.";
+		return 0;
+	}
+	
+	return 1;
+}
+
 sub render_labels {
 	my ($dir, $patt, $asc) = @_;
-	$dir = $archive_dir unless (defined $archive_dir);
+	$dir = $usb_dir unless (defined $dir);
 	$patt = $archive_pattern unless (defined $patt);
 	$asc = 0 unless (defined $asc);
 
@@ -291,16 +387,32 @@ sub render_labels {
 	
 	# render labels
 	my $res = '';
-	map {
+	foreach my $f (@{$files}) {
 		$_label_cnt++;
-		$res .= label_render($_);
-	} @{$files};
+		my $label = label_render($f);
+		
+		# check label for sanity...
+		return undef unless (label_check($label, $f));
+		
+		# append to result
+		$res .= $label;
+	}
 	
 	return $res;
 }
 
 sub archive_discover {
 	my ($dir, $pattern) = @_;
+	my $err = "Error discovering OS archives: ";
+	unless (defined $dir && length($dir)) {
+		$Error = $err . "Undefined archive dir.";
+		return undef;
+	}
+	unless (defined $pattern && length($pattern) > 0) {
+		$Error = $err . "Undefined archive glob pattern.";
+		return undef;
+	}
+
 	my $p = $dir . '/' . $pattern;
 	my @list = bsd_glob($p, GLOB_BRACE);
 	if (GLOB_ERROR) {
@@ -312,10 +424,22 @@ sub archive_discover {
 }
 
 sub run {
+	# compute full dir path...
+	my $archive_dir = File::Spec->catdir($usb_dir, $dir_archive);
+	
+	# render labels...
 	my $labels = render_labels($archive_dir, $archive_pattern);
+	return 0 unless (defined $labels);
+
+	# compute index labels...
 	my $index_first = ($_label_cnt > 0) ? 1 : 0;
 	my $index_last = ($_label_cnt > 0) ? $_label_cnt : 0;
+
+	# render labels in ascending order
 	my $labels_asc = render_labels($archive_dir, $archive_pattern, 1);
+	return 0 unless (defined $labels_asc);
+	
+	# render metadata...
 	my $metadata = metadata_get();
 
 	my @tmp = ();
@@ -352,8 +476,11 @@ OPTIONS:
   
   -l  --label-template=FILE     Syslinux LABEL section template file
       --default-label-template  Prints default sysctl LABEL section template
-  
-  -d  --os-archive-dir=DIR      Full path to OS archive directory
+      
+  -d  --usb-dir=DIR             Full path to mounted usb key (Default: "$usb_dir")
+  -a  --archive-dir=DIR         Directory on usb key that contains OS
+                                archives (Default: "$dir_archive")
+
   -g  --archive-glob=PATTERN    OS archive file glob(3) pattern
                                 (Default: '$archive_pattern')
                                 
@@ -362,16 +489,30 @@ OPTIONS:
                                 will be written to stdout.
       
       --no-menu                 Don't use syslinux menus
+      --no-check-label          Don't run sanity check on generated label sections
 
   -V  --version                 Prints script version
   -h  --help                    This help message
 
 EXAMPLES:
 
- $MYNAME -d /mnt/usbkey/images
+ # generate syslinux.cfg with usb key mounted on /mnt/usb
+ $MYNAME -d /mnt/usb
  
- $MYNAME -t /tmp/syslinux.cfg.template -d /mnt/usbkey/images
-
+ # create syslinux.cfg template
+ $MYNAME --default-template > syslinux.cfg.template
+ 
+ # create syslinux.cfg LABEL template
+ $MYNAME --default-label-template > syslinux-label.template
+ 
+ # generate syslinux.cfg with usb key mounted on /mnt/usbkey
+ # using custom syslinux.cfg and label templates and OS tarballs
+ # located in "os-archives" sub directory
+ $MYNAME \
+ 	-d /mnt/usbkey \
+ 	-a os-archives \
+ 	-t /etc/diskless-usb/syslinux.cfg.template \
+ 	-l /etc/diskless-usb/syslinux-label.template
 EOF
 ;
 }
@@ -394,9 +535,11 @@ my $r = GetOptions(
 	'default-label-template' => sub {
 		print template_label_get(); exit 0;
 	},
-	'd|os-archive-dir=s' => \ $archive_dir,
+	'd|usb-dir=s' => \ $usb_dir,
+	'a|archive-dir=s' => \ $dir_archive,
 	'o|output=s' => \ $out,
 	'menu!' => \ $menu_enabled,
+	'check-label!' => \ $label_check,
 	'V|version' => sub {
 		printf("%s %s\n", $MYNAME, $VERSION);
 		exit 0;
@@ -412,13 +555,15 @@ unless ($r) {
 }
 
 # check directory
-unless (defined $archive_dir && -d $archive_dir && -r $archive_dir) {
+unless (defined $usb_dir && -d $usb_dir && -r $usb_dir) {
 	no warnings;
-	my_die("Undefined or invalid archive directory: '$archive_dir'.");
+	my_die("Undefined or invalid archive directory: '$usb_dir'.");
 	exit 1;
 }
 
 # fire in the hole!
-exit(! run());
+my $res = run();
+my_die($Error) unless ($res);
+exit 0;
 
 # EOF
