@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# WHAT: USB-key backup script
+# WHAT: Linux OS to USB-key backup script
 # AUTHOR: Brane F. Gracnar
 #
 
@@ -58,12 +58,6 @@ BOOTLOADER_INSTALL_DEV=""
 # Type: string
 # Default: "/etc/linux-usb-diskless/syslinux.cfg.template"
 BOOTLOADER_CFG_TEMPLATE="/etc/linux-usb-diskless/syslinux.cfg.template"
-
-# Update bootloader configuration?
-# 
-# Type: boolean
-# Default: 1
-ARCHIVE_UPDATE="1"
 
 # Archive mount device
 #
@@ -139,6 +133,10 @@ VERSION="0.15"
 ARCHIVE_ID=""
 REAL_ARCHIVE_NAME=""
 HOSTNAME=$(hostname)
+TIMESTAMP=""
+
+# flag: did we mounted usbkey?
+MOUNT_OK=0
 
 tty_colors_init() {
 	# don't set color codes if we're not
@@ -212,8 +210,15 @@ msg_err() {
 
 die() {
 	msg_err "$@"
-	umount "${MNT_DIR}" > /dev/null 2>&1
+	do_cleanup
 	exit 1
+}
+
+do_cleanup() {
+	if [ "${MOUNT_OK}" = "1" ]; then
+		fs_umount "${MNT_DIR}"
+		MOUNT_OK=0
+	fi
 }
 
 printhelp() {
@@ -228,6 +233,8 @@ OPTIONS:
 
   -c  --config=FILE        Loads specified configuration file.
   -d  --default-config     Prints out default configuration file
+  
+  -Y  --yes                Answer yes to all questions.
 
   -V  --version            Prints script version
   -h  --help               This help message
@@ -269,7 +276,7 @@ archive_cleanup() {
 	(
 		cd "${dir}" || die "Unable to enter directory '${dir}'"
 		
-		files="`ls *${prefix}*.tbz 2>/dev/null`"
+		files=$(ls *${prefix}* 2>/dev/null)
 		
 		# if no files were found, we have nothing
 		# clean up
@@ -329,26 +336,72 @@ check_mntdir() {
 fs_mount() {
 	local dev="${1}"
 	local dir="${2}"
+	
+	# fs check before mounting?
+	local do_fsck="${3}"
+	test -z "${do_fsck}" && do_fsck="${FSCK}"
 
-	if [ "${FSCK}" = "1" ]; then
+	if [ "${do_fsck}" = "1" ]; then
 		msg_info "Running filesystem check on device '${TERM_LRED}${dev}${TERM_RESET}'."
 		echo ""
 		fsck "${dev}"
 		echo ""
 	fi
+
 	# mount the goddamn device
 	check_mntdir "${dir}"
 	mount -o rw,noatime "${dev}" "${dir}" || die "Unable to mount '${dev}' to '${dir}'."
 	
+	# set mounted flag...
+	MOUNT_OK=1
+
+	return 0
+}
+
+fs_umount() {
+	local dir="${1}"
+	test -d "${dir}" || return 0
+	
+	msg_info "Unmounting: ${TERM_BOLD}${dir}${TERM_RESET}"
+	sync
+	umount "${dir}" || die "Unable to unmount: ${dir}"
+	return 0
+}
+
+sanitize_path() {
+	readlink -f "${1}" 2>/dev/null
+}
+
+backup_remote() {
+	local ts="${1}"
+	
+	# disabled?
+	test -z "${ARCHIVE_BACKUP_LOC}" && return 0
+	
+	# archive files
+	local files=$(sanitize_path "${MNT_DIR}/${ARCHIVE_DIR}")
+	files="${files}/*.${ts}*"
+	
+	# sylinux cfg
+	local syslinux_cfg=""
+	if [ -f "${MNT_DIR}/syslinux.cfg" ]; then
+		syslinux_cfg="${MNT_DIR}/syslinux.cfg"
+	fi
+
+	# send to all backup destinations
+	local loc=""
+	for loc in ${ARCHIVE_BACKUP_LOC}; do
+		test -z "${loc}" && continue
+		
+		msg_info "Copying OS archive to '${TERM_LGREEN}${loc}/${TIMESTAMP}${TERM_RESET}'"
+		echo ""
+		rsync -avp ${syslinux_cfg} ${files} "${loc}/${TIMESTAMP}"
+	done
+
 	return 0
 }
 
 backup_os() {
-	if [ "${ARCHIVE_UPDATE}" = "0" ]; then
-		msg_warn "Operating system backup creation is disabled."
-		return 0
-	fi
-
 	echo ""
 	echo -e "${TERM_YELLOW}#######################################################${TERM_RESET}"
 	echo -e "${TERM_YELLOW}#       CREATING OPERATING SYSTEM FULL BACKUP         #${TERM_RESET}"
@@ -359,63 +412,35 @@ backup_os() {
 	test ! -d "${ROOT_DIR}" && die "Directory '${ROOT_DIR}' is invalid."
 
 	# compute variables
-	ARCHIVE_ID=$(date +'%Y%m%d-%H%M%S')
-	#REAL_ARCHIVE_NAME="${ARCHIVE_NAME}.${ARCHIVE_ID}.tbz"
+	ARCHIVE_ID="${TIMESTAMP}"
 	REAL_ARCHIVE_NAME="${ARCHIVE_NAME}.${ARCHIVE_ID}.tgz"
 
 	# optionally prepend hostname to real archive name
 	test "${ARCHIVE_PREPEND_HOSTNAME}" = "1" && REAL_ARCHIVE_NAME="${HOSTNAME}.${REAL_ARCHIVE_NAME}"
-	local f="${MNT_DIR}/${ARCHIVE_DIR}/${REAL_ARCHIVE_NAME}"
+	local f=$(sanitize_path "${MNT_DIR}/${ARCHIVE_DIR}/${REAL_ARCHIVE_NAME}")
+	#local f="${MNT_DIR}/${ARCHIVE_DIR}/${REAL_ARCHIVE_NAME}"
 
-	f=$(echo "${f}" | sed -e 's/\/\//\//g')
-
-	msg_info "Mounting archive storage device '${TERM_LRED}${ARCHIVE_DEV}${TERM_RESET}' to '${TERM_YELLOW}${MNT_DIR}${TERM_RESET}'."
-	! is_sure && die "User is not sure to mount archive device ${ARCHIVE_DEV} to ${MNT_DIR}."
-
-	fs_mount "${ARCHIVE_DEV}" "${MNT_DIR}"
-	
 	if [ ! -e "${MNT_DIR}/${ARCHIVE_DIR}" -o ! -d "${MNT_DIR}/${ARCHIVE_DIR}" ]; then
 		msg_warn "Creating missing archive directory '${TERM_YELLOW}${MNT_DIR}/${ARCHIVE_DIR}${TERM_RESET}'."
 		rm -f "${MNT_DIR}/${ARCHIVE_DIR}" >/dev/null 2>&1
 		mkdir -p "${MNT_DIR}/${ARCHIVE_DIR}" || die "Unable to create directory '${MNT_DIR}/${ARCHIVE_DIR}'."
 	fi
 
-	# hm, check if 
-	archive_cleanup "${MNT_DIR}/${ARCHIVE_DIR}" "${ARCHIVE_NAME}"
-
 	# run archiver
 	msg_info "Creating OS package tarball '${TERM_LGREEN}${f}${TERM_RESET}'."
 	
 	local tar_opt=""
 	test -f "${ARCHIVE_EXCLUDE_FILE}" && tar_opt="-X ${ARCHIVE_EXCLUDE_FILE}"
-	
-	(
-		cd / || die "Unable to chdir /"
-		#tar --one-file-system ${tar_opt} -cjpf "${f}" "${ROOT_DIR}" /dev/console /dev/null 2>&1 || die "Unable to create OS package tarball."
-		tar --one-file-system ${tar_opt} -czpf "${f}" "${ROOT_DIR}" /dev/console /dev/null 2>&1 || die "Unable to create OS package tarball."
-		echo ""
-	)
-	# sync buffers
-	sync
 
+	# now, really create archive...	
+	tar --one-file-system ${tar_opt} -czpf "${f}" "${ROOT_DIR}" /dev/console /dev/null 2>&1 || die "Unable to create OS package tarball."
+	echo ""
+
+	# create md5 checksum
 	local md5=$(md5sum "${f}" | awk '{print $1}')
 	msg_info "MD5 digest of ${REAL_ARCHIVE_NAME} is '${TERM_YELLOW}${md5}${TERM_RESET}'."
 	msg_info "Writing MD5 digest to '${f}.md5'"
 	echo "${md5}" > "${f}.md5"
-
-	# copy tarball to safe location
-	if [ ! -z "${ARCHIVE_BACKUP_LOC}" ]; then
-		msg_info ""
-		msg_info "Creating backup of archive to '${TERM_LGREEN}${ARCHIVE_BACKUP_LOC}${TERM_RESET}'"
-		msg_info ""
-		echo ""
-		rsync -avzp ${f}* "${ARCHIVE_BACKUP_LOC}"
-		echo ""
-		echo ""
-	fi
-
-	msg_info "Unmounting archive storage device '${TERM_LRED}${ARCHIVE_DEV}${TERM_RESET}' from '${TERM_YELLOW}${MNT_DIR}${TERM_RESET}'."
-	umount "${MNT_DIR}" || die "Unable to umount ${ARCHIVE_DEV} from ${MNT_DIR}."
 
 	# this is it...
 	return 0
@@ -430,24 +455,49 @@ bootloader_update() {
 
 	SYSLINUX_CFG="/syslinux.cfg"
 
-	local syslinux_cfg="${MNT_DIR}/${SYSLINUX_CFG}"
+	local syslinux_cfg=$(sanitize_path "${MNT_DIR}/${SYSLINUX_CFG}")
 
 	# additional opt
+	opt="-t /root/linux-usb-diskless/syslinux.cfg.template -l /root/linux-usb-diskless/syslinux-label.template"
 
 	# run updater script
 	diskless-usb-create-syslinux-config ${opt} \
-		-d "${MNT_DIR}/${ARCHIVE_DIR}" \
-		-o "${syslinux_cfg}"
+		-d "${MNT_DIR}" \
+		-a "${ARCHIVE_DIR}" \
+		-o "${syslinux_cfg}" || die "Error creating syslinux configuration."
 }
 
 run_it() {
 	test -z "${MNT_DIR}" && die "Mount directory is not specified."
+	
+	# compute timestamp
+	TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+	msg_info "Creating Linux OS image id ${TERM_BOLD}${TIMESTAMP}${TERM_RESET}"
+	
+	# mount fs
+	msg_info "Mounting archive storage device '${TERM_LRED}${ARCHIVE_DEV}${TERM_RESET}' to '${TERM_YELLOW}${MNT_DIR}${TERM_RESET}'."
+	is_sure || die "You seem to be unsure if you want to mount archive device ${ARCHIVE_DEV} to ${MNT_DIR}."
+	fs_mount "${ARCHIVE_DEV}" "${MNT_DIR}" || die
+	
+	# perform archive directory cleanup 
+	archive_cleanup "${MNT_DIR}/${ARCHIVE_DIR}" "${ARCHIVE_NAME}"
 
 	# create OS backup
 	backup_os
 	
 	# update boot loader configuration
 	bootloader_update
+	
+	# send stuff to remote locations...
+	backup_remote "${TIMESTAMP}"
+
+	# umount fs
+	msg_info "Unmounting archive storage device '${TERM_LRED}${ARCHIVE_DEV}${TERM_RESET}' from '${TERM_YELLOW}${MNT_DIR}${TERM_RESET}'."
+	fs_umount "${MNT_DIR}" || die "Unable to umount ${ARCHIVE_DEV} from ${MNT_DIR}."
+	MOUNT_OK=0
+
+	# cleanup the mess
+	do_cleanup
 	
 	msg_info ""
 	msg_info "ALL DONE."
@@ -473,7 +523,7 @@ PATH=${PATH}:/sbin:/usr/sbin:/usr/local/sbin:$(dirname "$0"):.
 # initialize shell colors
 tty_colors_init
 
-TEMP=$(getopt -o c:dVh --long config:,default-config,version,help -n "$MYNAME" -- "$@")
+TEMP=$(getopt -o c:dYVh --long config:,default-config,yes,version,help -n "$MYNAME" -- "$@")
 test "$?" != "0" && die "Command line parsing error."
 eval set -- "$TEMP"
 while true; do
@@ -485,6 +535,10 @@ while true; do
 		-d|--default-config)
 			config_default_print
 			exit 0
+			;;
+		-Y|--yes)
+			SURE=1
+			shift
 			;;
 		-V|--version)
 			echo "$MYNAME $VERSION"
