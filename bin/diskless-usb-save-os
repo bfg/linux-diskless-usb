@@ -97,8 +97,8 @@ SYSLINUX_CONFIG="/syslinux.cfg"
 #       for instructions.
 #
 # Type: string
-# Default: "/etc/linux-usb-diskless/syslinux.cfg.template"
-SYSLINUX_TEMPLATE_CONFIG="/etc/linux-usb-diskless/syslinux.cfg.template"
+# Default: "/etc/linux-diskless/syslinux.cfg.template"
+SYSLINUX_TEMPLATE_CONFIG="/etc/linux-diskless/syslinux.cfg.template"
 
 # Path to syslinux LABEL section template file
 #
@@ -106,8 +106,8 @@ SYSLINUX_TEMPLATE_CONFIG="/etc/linux-usb-diskless/syslinux.cfg.template"
 #       for instructions.
 #
 # Type: string
-# Default: "/etc/linux-usb-diskless/syslinux-label.template"
-SYSLINUX_TEMPLATE_LABEL="/etc/linux-usb-diskless/syslinux-label.template"
+# Default: "/etc/linux-diskless/syslinux-label.template"
+SYSLINUX_TEMPLATE_LABEL="/etc/linux-diskless/syslinux-label.template"
 
 # Additional diskless-usb-create-syslinux-config command
 # line options.
@@ -140,7 +140,7 @@ YES="no"
 #                     FUNCTIONS                       #
 #######################################################
 MYNAME=$(basename "$0")
-VERSION="0.16"
+VERSION="0.17"
 ARCHIVE_ID=""
 REAL_ARCHIVE_NAME=""
 HOSTNAME=$(hostname)

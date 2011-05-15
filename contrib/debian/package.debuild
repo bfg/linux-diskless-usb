@@ -39,15 +39,15 @@ echo ""
 	export PACKAGE_NAME PACKAGE_VERSION
 
 	# create directories
-	mkdir -p etc/linux-usb-diskless || die "Unable to create etc directory."
+	mkdir -p etc/linux-diskless || die "Unable to create etc directory."
 	mkdir -p usr/sbin || die "Unable to create bin dirs."
-	mkdir -p usr/share/linux-usb-diskless || die "Unable to create share dirs."
+	mkdir -p usr/share/linux-diskless-usb || die "Unable to create share dirs."
 
 	# binaries
 	cp -ra ${BASEDIR}/bin/* usr/sbin || die "Unable to install sbin binaries."
 	
 	# readme
-	cp ${BASEDIR}/README.textile usr/share/linux-usb-diskless || die "Unable to install readme."
+	cp ${BASEDIR}/README.textile usr/share/linux-diskless-usb || die "Unable to install readme."
 
 	# copy debian package control files.
 	cp -ra "${PKG_BASEDIR}/DEBIAN" .
