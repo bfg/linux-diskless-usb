@@ -16,8 +16,9 @@
 # Default: "/"
 ROOT_DIR="/"
 
-# Temporary mount directory
-# If it does not exist, it is
+# USB key mount directory
+# 
+# NOTE: If it does not exist, it is
 # going to be created
 #
 # Type: string
@@ -31,49 +32,21 @@ MNT_DIR="/mnt/usbkey"
 # Default: 0
 FSCK=0
 
-# Update bootloader configuration?
-# 
-# Type: boolean
-# Default: 1
-BOOTLOADER_UPDATE="1"
-
-# Bootloader device name
-# This device holds bootloader configuration
-# file
+# USB key device name
 #
 # Type: string
 # Default: ""
-BOOTLOADER_DEV=""
+USBKEY_DEV=""
 
-# Bootloader installation device
-# On this device bootloader is going
-# to be installed.
-#
-# Type: string
-# Default: ""
-BOOTLOADER_INSTALL_DEV=""
+########## OPERATION SYSTEM ARCHIVE CONFIGURATION ##########
 
-# Path to syslinux.cfg template file
-#
-# Type: string
-# Default: "/etc/linux-usb-diskless/syslinux.cfg.template"
-BOOTLOADER_CFG_TEMPLATE="/etc/linux-usb-diskless/syslinux.cfg.template"
-
-# Archive mount device
-#
-# Type: string
-# Default: ""
-ARCHIVE_DEV=""
-
-# Archive storage directory
-# This directory is relative
-# to $ARCHIVE_DEV setting
+# OS archive directory on USB key mountpoint
 # 
 # Type: string
 # Default: /os-images
 ARCHIVE_DIR="/os-images"
 
-# File containing tar exclude patterns
+# File containing tar(1) exclude patterns
 #
 # Type: string
 # Default: ""
@@ -93,7 +66,7 @@ ARCHIVE_NAME="os"
 ARCHIVE_PREPEND_HOSTNAME=1
 
 # Maximum number of OS archive files
-# to maintain on $ARCHIVE_DEV; oldest files will
+# to maintain on USB key; oldest files will
 # be removed. Set this to 0 to disable old archive
 # removal
 #
@@ -101,18 +74,56 @@ ARCHIVE_PREPEND_HOSTNAME=1
 # Default: 8
 ARCHIVE_MAX_NUM="8"
 
-# Rsync location of used to copy
-# freshly created OS archive.
-# If this variable is empty, no copying
-# will be done.
+# Space separated list of rsync(1) destination URLs
+# where newly created OS archive is going to be copied.
 #
 # Type: string
 # Default: ""
 ARCHIVE_BACKUP_LOC=""
+ 
+############################################################
 
-# I'm fucking sure mode
+##########   SYSLINUX BOOTLOADER CONFIGURATION    ##########
+
+# Syslinux configuration path on USB key
 #
-# When this setting is set to 1, script
+# Type: string
+# Default: "/syslinux.cfg"
+SYSLINUX_CONFIG="/syslinux.cfg"
+
+# Path to syslinux.cfg template file
+#
+# NOTE: Run diskless-usb-create-syslinux-config --help
+#       for instructions.
+#
+# Type: string
+# Default: "/etc/linux-usb-diskless/syslinux.cfg.template"
+SYSLINUX_TEMPLATE_CONFIG="/etc/linux-usb-diskless/syslinux.cfg.template"
+
+# Path to syslinux LABEL section template file
+#
+# NOTE: Run diskless-usb-create-syslinux-config --help
+#       for instructions.
+#
+# Type: string
+# Default: "/etc/linux-usb-diskless/syslinux-label.template"
+SYSLINUX_TEMPLATE_LABEL="/etc/linux-usb-diskless/syslinux-label.template"
+
+# Additional diskless-usb-create-syslinux-config command
+# line options.
+# 
+# NOTE: Run diskless-usb-create-syslinux-config --help
+#       for instructions.
+#
+# Type: string
+# Default: ""
+SYSLINUX_GENERATOR_OPT=""
+
+############################################################
+
+# I'm fucking sure mode (--yes command line option)
+#
+# When this setting is set to "yes", script
 # won't ask for action confirmations anymore...
 #
 # It VERY RECOMMENDED to leave this setting
@@ -120,7 +131,7 @@ ARCHIVE_BACKUP_LOC=""
 #
 # Type: boolean
 # Default: 0
-SURE=0
+YES="no"
 
 # In order to "validate" this configuration file,
 # comment out the following line
@@ -135,8 +146,18 @@ REAL_ARCHIVE_NAME=""
 HOSTNAME=$(hostname)
 TIMESTAMP=""
 
-# flag: did we mounted usbkey?
-MOUNT_OK=0
+# default config file
+_CONFIG_DEFAULT="/etc/linux-usb-diskless/${MYNAME}.conf"
+
+# existing syslinux.cfg backup
+_SYSLINUX_CFG_BACKUP=""
+
+# newly generated syslinux.cfg
+_SYSLINUX_CFG_NEW=""
+
+# flags
+_CANCEL=0
+_MOUNT_OK=0
 
 tty_colors_init() {
 	# don't set color codes if we're not
@@ -169,6 +190,11 @@ is_sure() {
 		# msg_warn "\$SURE is set to YES, returning success."
 		return 0
 	fi
+	
+	# not connected to tty? fuck...
+	if [ ! -t 1 -o ! -t 2 ]; then
+		die "Not connected to TTY, \$SURE is not set and --yes command line option is not used; unable to continue."
+	fi	
 
 	local default="$1"
 	local yn_str=""
@@ -190,6 +216,68 @@ is_sure() {
 	else
 		return 1
 	fi
+}
+
+bool_question() {
+	local q="${1}"
+	local default="${2}"
+
+	# get default return value
+	if [ -z "${default}" ]; then
+		default="${YES}"
+	fi
+	bool_get "${default}"
+	default=$?
+	
+	# --yes in effect?
+	bool_get "${YES}" && return 0
+
+	# not connected to tty? fuck, we cannot ask questions! return default value...
+	test ! -t 1 -o ! -t 2 && return ${default}
+
+	# question str
+	local yn_str="[y/N]"
+	if [ "${default}" = "0" ]; then
+		yn_str="[Y/n]"
+	fi
+	local str="${q} ${yn_str}: "
+	
+	local i=0
+	local answer=""
+	while true; do
+		# max 3 retries
+		i=$((${i} + 1))
+		test ${i} -ge 3 && return ${default}
+		
+		echo -ne "${str}"
+		read answer
+		
+		# default answer?
+		test -z "${answer}" && return ${default}
+		
+		# get boolean
+		bool_get "${answer}"
+		local rv=$?
+		
+		# invalid answer?
+		test "${rv}" = "2" && continue
+		
+		return ${rv}
+	done
+}
+
+bool_get() {
+	case ${1} in
+		1|[Yy]|[Yy][Ee][Ss]|[Tt]|[Tt][Rr][Uu][Ee])
+			return 0
+			;;
+		0|[Nn]|[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee])
+			return 1
+			;;
+		*)
+			return 2
+			;;
+	esac
 }
 
 msg_info() {
@@ -215,26 +303,37 @@ die() {
 }
 
 do_cleanup() {
-	if [ "${MOUNT_OK}" = "1" ]; then
-		fs_umount "${MNT_DIR}"
-		MOUNT_OK=0
+	# umount mount directory...
+	test "${_MOUNT_OK}" = "1" && fs_umount "${MNT_DIR}"
+	
+	# old syslinux config?
+	if [ ! -z "${_SYSLINUX_CFG_BACKUP}" -a -f "${_SYSLINUX_CFG_BACKUP}" ]; then
+		rm -f "${_SYSLINUX_CFG_BACKUP}" >/dev/null 2>&1
 	fi
+
+	# new syslinux config?
+	if [ ! -z "${_SYSLINUX_CFG_NEW}" -a -f "${_SYSLINUX_CFG_NEW}" ]; then
+		rm -f "${_SYSLINUX_CFG_NEW}" >/dev/null 2>&1
+	fi
+
+	return 0
 }
 
 printhelp() {
 	cat <<EOF
 Usage$: ${MYNAME} [OPTIONS]
 
-This script creates FULL operating system backup
-stores it on in configuration file specified device
-and optionally updates bootloader configuration.
+This script creates FULL operating system backup as
+gzipped tar archive and updates syslinux bootloader
+configuration.
 
 OPTIONS:
 
   -c  --config=FILE        Loads specified configuration file.
-  -d  --default-config     Prints out default configuration file
+                           (Default: "${_CONFIG_DEFAULT}")
+  -d  --default-config     Prints default configuration file
   
-  -Y  --yes                Answer yes to all questions.
+  -Y  --yes                Answer yes to all questions (Default: ${YES})
 
   -V  --version            Prints script version
   -h  --help               This help message
@@ -254,7 +353,7 @@ config_load() {
 }
 
 config_default_print() {
-	cat $0 | head -n 131 | tail -n 124
+	cat $0 | head -n 137 | tail -n 130 | sed -re 's/^([A-Z]+.*)/# \1/g'
 	echo "ive_been_lazy_and_ihavent_edited_default_config_file"
 	echo ""
 	echo "# EOF"
@@ -264,19 +363,26 @@ archive_cleanup() {
 	# is this feature disabled?
 	test "${ARCHIVE_MAX_NUM}" = "0" && return 0
 
-	local dir="${1}"
+	echo ""
+	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#       CLEANING UP USB KEY ARCHIVE DIRECTORY         #${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
+	echo ""
+
+	local dir=$(sanitize_path "${1}")
 	local prefix="${2}"
+
 	local files=""
 	local n_files=0
 	local can_rm=""
 	local can_un=""
-	msg_info ""
+	echo ""
 	msg_info "Cleaning up archive directory '${dir}'."
-	msg_info ""
+	echo ""
 	(
 		cd "${dir}" || die "Unable to enter directory '${dir}'"
 		
-		files=$(ls *${prefix}* 2>/dev/null)
+		files=$(ls *${prefix}* 2>/dev/null | grep -v '\.md5$')
 		
 		# if no files were found, we have nothing
 		# clean up
@@ -302,22 +408,26 @@ archive_cleanup() {
 		
 		test -z "${can_rm}" && return 0
 
+		local x=""
 		msg_warn "Found ${TERM_LRED}${n_files}${TERM_RESET} archives in ${dir}."
 		msg_warn "Maximum number of archive files is set to ${TERM_LRED}${ARCHIVE_MAX_NUM}${TERM_RESET}."
-		msg_warn ""
-		msg_warn "The following archives are going to be deleted:"
-		msg_warn ""
-		msg_warn "${TERM_LRED}${can_rm}${TERM_RESET}"
-		msg_warn ""
-		msg_warn "The following archived will be left untouched:"
-		msg_warn ""
-		msg_warn "${TERM_LGREEN}${can_un}${TERM_RESET}"
+		echo ""
+
+		msg_info "The following archives will be ${TERM_BOLD}LEFT INTACT:${TERM_RESET}"
+		for x in ${can_un}; do
+			echo "        $x"
+		done
+		echo ""
+
+		msg_warn "The following archives are going to be ${TERM_BOLD}REMOVED:${TERM_RESET}"
+		for x in ${can_rm}; do
+			echo -e "        ${TERM_LRED}$x${TERM_RESET}"
+		done
 		echo ""
 
 		# remove files
 		for f in ${can_rm}; do
-			msg_warn "Removing file '${TERM_LRED}${f}${TERM_RESET}'"
-			is_sure && rm -vf ${f}*
+			bool_question "Remove archive '${TERM_LRED}${f}${TERM_RESET}'?" && rm -vf ${f}{,.md5}
 		done
 		echo ""
 	)
@@ -340,6 +450,9 @@ fs_mount() {
 	# fs check before mounting?
 	local do_fsck="${3}"
 	test -z "${do_fsck}" && do_fsck="${FSCK}"
+	
+	test -z "${dev}" && die "Unable to mount unspecified device to '${dir}'"
+	test ! -e "${dev}" && die "Unable to mount nonexisting device '${dev}' to '${dir}'."
 
 	if [ "${do_fsck}" = "1" ]; then
 		msg_info "Running filesystem check on device '${TERM_LRED}${dev}${TERM_RESET}'."
@@ -351,16 +464,15 @@ fs_mount() {
 	# mount the goddamn device
 	check_mntdir "${dir}"
 	mount -o rw,noatime "${dev}" "${dir}" || die "Unable to mount '${dev}' to '${dir}'."
-	
-	# set mounted flag...
-	MOUNT_OK=1
 
 	return 0
 }
 
 fs_umount() {
 	local dir="${1}"
-	test -d "${dir}" || return 0
+	
+	# is this dir mounted?
+	fs_mounted "${dir}" || return 0
 	
 	msg_info "Unmounting: ${TERM_BOLD}${dir}${TERM_RESET}"
 	sync
@@ -368,25 +480,37 @@ fs_umount() {
 	return 0
 }
 
+fs_mounted() {
+	local dir="${1}"	
+	test -d "${dir}" || return 1
+	grep -q " ${dir} " /proc/mounts > /dev/null 2>&1
+}
+
 sanitize_path() {
 	readlink -f "${1}" 2>/dev/null
 }
 
-backup_remote() {
+archive_backup_remote() {
 	local ts="${1}"
 	
 	# disabled?
 	test -z "${ARCHIVE_BACKUP_LOC}" && return 0
+
+	echo ""
+	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#      BACKING UP OS ARCHIVE TO REMOTE LOCATIONS      #${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
+	echo ""
 	
 	# archive files
 	local files=$(sanitize_path "${MNT_DIR}/${ARCHIVE_DIR}")
 	files="${files}/*.${ts}*"
 	
-	# sylinux cfg
-	local syslinux_cfg=""
-	if [ -f "${MNT_DIR}/syslinux.cfg" ]; then
-		syslinux_cfg="${MNT_DIR}/syslinux.cfg"
-	fi
+	# sylinux.cfg backup?
+	test -f "${_SYSLINUX_CFG_BACKUP}" && files="${files} ${_SYSLINUX_CFG_BACKUP}"
+
+	# new syslinux.cfg?
+	test -f "${_SYSLINUX_CFG_NEW}" && files="${files} ${_SYSLINUX_CFG_NEW}"
 
 	# send to all backup destinations
 	local loc=""
@@ -394,21 +518,21 @@ backup_remote() {
 		test -z "${loc}" && continue
 		
 		msg_info "Copying OS archive to '${TERM_LGREEN}${loc}/${TIMESTAMP}${TERM_RESET}'"
+		rsync --no-perms --no-owner --no-group -v ${syslinux_cfg} ${files} "${loc}"
 		echo ""
-		rsync -avp ${syslinux_cfg} ${files} "${loc}/${TIMESTAMP}"
 	done
 
 	return 0
 }
 
-backup_os() {
+archive_create() {
 	echo ""
-	echo -e "${TERM_YELLOW}#######################################################${TERM_RESET}"
-	echo -e "${TERM_YELLOW}#       CREATING OPERATING SYSTEM FULL BACKUP         #${TERM_RESET}"
-	echo -e "${TERM_YELLOW}#######################################################${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#       CREATING OPERATING SYSTEM FULL BACKUP         #${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
 	echo ""
 
-	test -z "${ARCHIVE_DEV}" && die "Archive device is not defined."
+	test -z "${USBKEY_DEV}" && die "Archive device is not defined."
 	test ! -d "${ROOT_DIR}" && die "Directory '${ROOT_DIR}' is invalid."
 
 	# compute variables
@@ -448,23 +572,67 @@ backup_os() {
 
 bootloader_update() {
 	echo ""
-	echo -e "${TERM_YELLOW}#######################################################${TERM_RESET}"
-	echo -e "${TERM_YELLOW}#     UPDATING SYSLINUX BOOTLOADER CONFIGURATION       #${TERM_RESET}"
-	echo -e "${TERM_YELLOW}#######################################################${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#     UPDATING SYSLINUX BOOTLOADER CONFIGURATION      #${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
 	echo ""
 
-	SYSLINUX_CFG="/syslinux.cfg"
+	local syslinux_cfg=$(sanitize_path "${MNT_DIR}/${SYSLINUX_CONFIG}")
+	
+	_SYSLINUX_CFG_NEW="/tmp/syslinux.cfg.${TIMESTAMP}.new"
+	
+	# create existing configuration backup
+	_SYSLINUX_CFG_BACKUP=""
+	if [ -f "${syslinux_cfg}" -a -r "${syslinux_cfg}" ]; then
+		 _SYSLINUX_CFG_BACKUP="/tmp/syslinux.cfg.${TIMESTAMP}.backup"
+		 cp -f "${syslinux_cfg}" "${_SYSLINUX_CFG_BACKUP}" || die "Unable to backup existing syslinux.cfg configuration."
+	else
+		msg_warn "Syslinux configuration not found: ${syslinux_cfg}"
+		rm -f "${syslinux_cfg}" >/dev/null 2>&1
+	fi
+	
+	# compute generator opt
+	local opt=""
+	
+	# syslinux.cfg.template?
+	test ! -z "${SYSLINUX_TEMPLATE_CONFIG}" && opt="${opt} -t ${SYSLINUX_TEMPLATE_CONFIG}"
+	
+	# syslinux-label.template?
+	test ! -z "${SYSLINUX_TEMPLATE_LABEL}" && opt="${opt} -l ${SYSLINUX_TEMPLATE_LABEL}"
+	
+	# additional generator options?
+	test ! -z "${SYSLINUX_GENERATOR_OPT}" && opt="${opt} ${SYSLINUX_GENERATOR_OPT}"
+ 
+	# run syslinux.cfg generator script
+	diskless-usb-create-syslinux-config ${opt} -o "${_SYSLINUX_CFG_NEW}" || die "Error creating syslinux configuration."
+	
+	# show diff
+	if [ ! -z "${_SYSLINUX_CFG_BACKUP}" ]; then
+		if ! bool_get "${YES}" && bool_question "Show diff between old and new ${SYSLINUX_CONFIG}?" n; then
+			diff -u "${_SYSLINUX_CFG_BACKUP}" "${_SYSLINUX_CFG_NEW}"
+			echo ""
+		fi
+	fi
+	
+	# install syslinux.cfg
+	bool_question "Install new version of syslinux configuration?" "n" || die "Aborted by user."
+	msg_info "Installing new syslinux configuration: ${syslinux_cfg_tmp} => ${syslinux_cfg}."
+	cp -f "${_SYSLINUX_CFG_NEW}" "${syslinux_cfg}" || die "Unable to install syslinux configuration file."
+	
+	msg_info "Syslinux bootloader configuration updated."
+	echo "" 
 
-	local syslinux_cfg=$(sanitize_path "${MNT_DIR}/${SYSLINUX_CFG}")
+	return 0
+}
 
-	# additional opt
-	opt="-t /root/linux-usb-diskless/syslinux.cfg.template -l /root/linux-usb-diskless/syslinux-label.template"
-
-	# run updater script
-	diskless-usb-create-syslinux-config ${opt} \
-		-d "${MNT_DIR}" \
-		-a "${ARCHIVE_DIR}" \
-		-o "${syslinux_cfg}" || die "Error creating syslinux configuration."
+trap_cancel() {
+	_CANCEL=$((${_CANCEL} + 1))
+	if [ ${_CANCEL} -lt 3 ]; then
+		local left=$((3 - ${_CANCEL}))
+		msg_warn "Got INT/TERM signal; send send signal ${left} more time(s) to really cancel script execution."
+		return 0
+	fi
+	die "Script execution cancelled by SIG INT/TERM."  	
 }
 
 run_it() {
@@ -472,36 +640,31 @@ run_it() {
 	
 	# compute timestamp
 	TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-	msg_info "Creating Linux OS image id ${TERM_BOLD}${TIMESTAMP}${TERM_RESET}"
+	msg_info "Creating Linux OS archive id ${TERM_BOLD}${TIMESTAMP}${TERM_RESET}"
+	echo ""
 	
 	# mount fs
-	msg_info "Mounting archive storage device '${TERM_LRED}${ARCHIVE_DEV}${TERM_RESET}' to '${TERM_YELLOW}${MNT_DIR}${TERM_RESET}'."
-	is_sure || die "You seem to be unsure if you want to mount archive device ${ARCHIVE_DEV} to ${MNT_DIR}."
-	fs_mount "${ARCHIVE_DEV}" "${MNT_DIR}" || die
+	if ! bool_question "Mount USB key device '${TERM_LRED}${USBKEY_DEV}${TERM_RESET}' to '${TERM_YELLOW}${MNT_DIR}${TERM_RESET}'?" n; then
+		die "You don't seem to be sure if you want to mount archive device ${USBKEY_DEV} to ${MNT_DIR}."
+	fi
+	msg_info "Mounting archive storage device '${TERM_LRED}${USBKEY_DEV}${TERM_RESET}' to '${TERM_YELLOW}${MNT_DIR}${TERM_RESET}'."
+	fs_mount "${USBKEY_DEV}" "${MNT_DIR}" || die
+	_MOUNT_OK=1
 	
 	# perform archive directory cleanup 
 	archive_cleanup "${MNT_DIR}/${ARCHIVE_DIR}" "${ARCHIVE_NAME}"
 
 	# create OS backup
-	backup_os
+	archive_create
 	
 	# update boot loader configuration
 	bootloader_update
 	
 	# send stuff to remote locations...
-	backup_remote "${TIMESTAMP}"
-
-	# umount fs
-	msg_info "Unmounting archive storage device '${TERM_LRED}${ARCHIVE_DEV}${TERM_RESET}' from '${TERM_YELLOW}${MNT_DIR}${TERM_RESET}'."
-	fs_umount "${MNT_DIR}" || die "Unable to umount ${ARCHIVE_DEV} from ${MNT_DIR}."
-	MOUNT_OK=0
+	archive_backup_remote "${TIMESTAMP}"
 
 	# cleanup the mess
 	do_cleanup
-	
-	msg_info ""
-	msg_info "ALL DONE."
-	msg_info ""
 }
 
 ive_been_lazy_and_ihavent_edited_default_config_file() {
@@ -523,6 +686,10 @@ PATH=${PATH}:/sbin:/usr/sbin:/usr/local/sbin:$(dirname "$0"):.
 # initialize shell colors
 tty_colors_init
 
+# try to load default config file
+config_load "${_CONFIG_DEFAULT}"
+Error=""
+
 TEMP=$(getopt -o c:dYVh --long config:,default-config,yes,version,help -n "$MYNAME" -- "$@")
 test "$?" != "0" && die "Command line parsing error."
 eval set -- "$TEMP"
@@ -538,6 +705,7 @@ while true; do
 			;;
 		-Y|--yes)
 			SURE=1
+			YES="yes"
 			shift
 			;;
 		-V|--version)
@@ -559,10 +727,11 @@ while true; do
 	esac
 done
 
-
-msg_info "Starting ${TERM_LRED}$MYNAME${TERM_RESET} version ${TERM_YELLOW}$VERSION${TERM_RESET}."
+# install signal handlers (traps)
+trap trap_cancel SIGINT SIGTERM
 
 # run the devil...
+msg_info "Starting ${TERM_LRED}$MYNAME${TERM_RESET} version ${TERM_YELLOW}$VERSION${TERM_RESET} [pid: $$]."
 run_it
 
 exit 0
