@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PACKAGE_NAME="linux-usb-diskless"
+PACKAGE_NAME="linux-diskless-usb"
 PACKAGE_VERSION=""
 BUILD_NO="1"
 

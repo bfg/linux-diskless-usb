@@ -140,14 +140,14 @@ YES="no"
 #                     FUNCTIONS                       #
 #######################################################
 MYNAME=$(basename "$0")
-VERSION="0.15"
+VERSION="0.16"
 ARCHIVE_ID=""
 REAL_ARCHIVE_NAME=""
 HOSTNAME=$(hostname)
 TIMESTAMP=""
 
 # default config file
-_CONFIG_DEFAULT="/etc/linux-usb-diskless/${MYNAME}.conf"
+_CONFIG_DEFAULT="/etc/linux-diskless/${MYNAME}.conf"
 
 # existing syslinux.cfg backup
 _SYSLINUX_CFG_BACKUP=""
@@ -294,7 +294,6 @@ msg_err() {
 	logger -i "$MYNAME error: $@"
 	echo -e "${TERM_LRED}ERROR  :${TERM_RESET} $@ ${TERM_RESET}"
 }
-
 
 die() {
 	msg_err "$@"

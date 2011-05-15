@@ -7,28 +7,31 @@ When you run Linux operating system completely in ram (/ is mounted on tmpfs),
 you want preserve changes you made to system between system reboots and this is
 what this project provides ;)
 
-This project consist of two scripts:
+This project consist of the following scripts:
 
-* diskless-usb-save-os
+* *diskless-usb-save-os*
 Creates gzipped tarball of */* directory to specified location and
 updates syslinux configuration using *diskless-usb-create-syslinux-config*
 
-* diskless-usb-create-syslinux-config
+* *diskless-usb-create-syslinux-config*
 Creates/generates syslinux.cfg configuration from discovered
 list of operating system tarballs created by *diskless-usb-save-os*
+
+* *diskless-mkusbkey*
+Creates syslinux bootable USB key using *mkdiskimage*
 
 h1. HOWTO
 
 * create configuration file and edit it
 bc. 
-diskless-usb-save-os --default-config > /etc/linux-usb-diskless/diskless-usb-save-os.conf
+diskless-usb-save-os --default-config > /etc/linux-diskless/diskless-usb-save-os.conf
 vi /etc/linux-usb-diskless/diskless-usb-save-os.conf
 
 * create syslinux configuration generator template files:
 
 bc. 
-diskless-usb-create-syslinux-config --default-template > /etc/linux-usb-diskless/syslinux.cfg.template
-diskless-usb-create-syslinux-config --default-label-template > /etc/linux-usb-diskless/syslinux-label.template
+diskless-usb-create-syslinux-config --default-template > /etc/linux-diskless/syslinux.cfg.template
+diskless-usb-create-syslinux-config --default-label-template > /etc/linux-diskless/syslinux-label.template
 
 * edit label template file
 
@@ -54,7 +57,7 @@ bc.
 * do the testrun!
 
 bc. 
-diskless-usb-save-os -c /etc/linux-usb-diskless/diskless-usb-save-os.conf
+diskless-usb-save-os -c /etc/linux-diskless/diskless-usb-save-os.conf
 
 
 h1. PACKAGES
