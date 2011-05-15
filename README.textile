@@ -1,17 +1,89 @@
-h1. NAME
-
-TODO
-
 h1. DESCRIPTION
 
-TODO
+This project contains set of scripts to make your life with
+Linux booted from USB key and running entirely in RAM much easier.
+
+When you run Linux operating system completely in ram (/ is mounted on tmpfs),
+you want preserve changes you made to system between system reboots and this is
+what this project provides ;)
+
+This project consist of two scripts:
+
+* diskless-usb-save-os
+Creates gzipped tarball of */* directory to specified location and
+updates syslinux configuration using *diskless-usb-create-syslinux-config*
+
+* diskless-usb-create-syslinux-config
+Creates/generates syslinux.cfg configuration from discovered
+list of operating system tarballs created by *diskless-usb-save-os*
+
+h1. HOWTO
+
+* create configuration file and edit it
+bc. 
+diskless-usb-save-os --default-config > /etc/linux-usb-diskless/diskless-usb-save-os.conf
+vi /etc/linux-usb-diskless/diskless-usb-save-os.conf
+
+* create syslinux configuration generator template files:
+
+bc. 
+diskless-usb-create-syslinux-config --default-template > /etc/linux-usb-diskless/syslinux.cfg.template
+diskless-usb-create-syslinux-config --default-label-template > /etc/linux-usb-diskless/syslinux-label.template
+
+* edit label template file
+
+bc. 
+ # Available variables:
+ #
+ # ${ARCHIVE_FILE}:        OS archive file basename
+ # ${ARCHIVE_FILE_FULL}:   OS archive file full name
+ # ${INDEX}:               OS archive index number
+ LABEL linux-${INDEX}
+        MENU LABEL [${INDEX}] OS ${ARCHIVE_FILE}
+        # change this to kernel path on your USB key
+        kernel kernels/vmlinuz-2.6.35-28.49
+        # change this to initrd/initramfs image on your USB key
+        initrd kernels/initrd.igz
+        # kernel boot parameters; you're completely on your own here;
+        # if you're using linux-diskless-init, you should change at
+        # least real_root parameter
+        append ro tmpfs_size=500M vga=791 real_root=:/os-images/${ARCHIVE_FILE}
+
+* insert USB key
+
+* do the testrun!
+
+bc. 
+diskless-usb-save-os -c /etc/linux-usb-diskless/diskless-usb-save-os.conf
+
+
+h1. PACKAGES
+
+See *contrib/* directory for building distribution specific packages.
+
+h2. Debian/Ubuntu
+
+Creating Debian/Ubuntu compatible *DEB* package is extremely easy:
+
+bc. 
+    cd contrib/debian
+    sudo ./package.debian
+    
+h1. SEE ALSO
+
+* "linux-diskless-init":https://github.com/bfg/linux-diskless-init Initrd/initramfs tools for booting linux from various sources:
+** normal blockdevices (just like most linux distros)
+** tar archives on block devices (also USB keys) or via HTTP/FTP to *tmpfs* (==> pure diskless mode)
+** "squashfs images":http://squashfs.sourceforge.net/ on block devices or via HTTP/FTP
+
+* "Syslinux bootloader":http://syslinux.zytor.com/wiki/index.php/The_Syslinux_Project
 
 h1. LICENSE
 
 <pre>
  Copyright (c) 2011, Brane F. Gracnar
  All rights reserved.
-
+ 
  Redistribution and use in source and binary forms, with or without modification,
  are permitted provided that the following conditions are met:
  
