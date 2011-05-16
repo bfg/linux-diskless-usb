@@ -12,6 +12,7 @@ MYNAME=$(basename "$0")
 VERSION="0.10"
 DO_IT=0
 SAFE_INSTALL="0"
+SYSLINUX_OPT=""
 LABEL=""
 _MNT_DIR=
 
@@ -95,6 +96,7 @@ do_it() {
 	# install syslinux
 	local opt=""
 	test "${SAFE_INSTALL}" = "1" && opt="-s"
+	test ! -z "${SYSLINUX_OPT}" && opt="${opt} ${SYSLINUX_OPT}"
 	msg_info "Installing syslinux bootloader: ${TERM_DGRAY}syslinux ${opt} ${fs_dev}${TERM_RESET}"
 	syslinux ${opt} "${fs_dev}" || die "Unable to install syslinux on created USB key."
 	
@@ -130,8 +132,23 @@ do_it() {
 		msg_info "Setting filesystem label: ${TERM_DGRAY}mlabel -i ${fs_dev} ::${LABEL}${TERM_RESET}"
 		mlabel -i "${fs_dev}" ::"${LABEL}" >/dev/null 2>&1
 	fi
+	
+	notice_ok
 
 	return 0
+}
+
+notice_ok() {
+	cat <<EOF
+
+Syslinux bootable USB key creation done. You still need to:
+
+	* put your custom kernel to /kernels directory
+	* put initramfs image to /kernels directory
+	* optionaly put OS tarballs to /os-images directory
+	* edit /syslinux.cfg
+
+EOF
 }
 
 printhelp() {
@@ -142,10 +159,24 @@ This script creates syslinux bootable USB key.
 
 OPTIONS:
   -s  --safe-install       Safe syslinux install
+  -O  --syslinux-opt="OPT" Additional command line options for syslinux(1)
+                           (Default: "${SYSLINUX_OPT}")
+  
   -l  --label=NAME         Set specified filesystem label
   
   -V  --version            Prints script version
   -h  --help               This help message
+
+EXAMPLES:
+
+ # Create bootable usbkey (device: /dev/sdc)
+ # with custom filesystem label
+ $MYNAME -l MY_USBKEY /dev/sdc
+ 
+ # Create bootable usbkey (device: /dev/sdc)
+ # with syslinux configuration in /syslinux directory
+ # and custom filesystem label
+ $MYNAME -l MY_USBKEY -O "-d syslinux" /dev/sdc
 EOF
 }
 
@@ -159,14 +190,18 @@ PATH=${PATH}:/sbin:/usr/sbin:/usr/local/sbin:$(dirname "$0")
 # initialize shell colors
 tty_colors_init
 
-TEMP=$(getopt -o sl:Vh --long safe-install,label:,do-it,version,help -n "$MYNAME" -- "$@")
+TEMP=$(getopt -o sO:l:Vh --long safe-install,syslinux-opt:,label:,do-it,version,help -n "$MYNAME" -- "$@")
 test "$?" != "0" && die "Command line parsing error."
 eval set -- "$TEMP"
 while true; do
 	case $1 in
-		-s|safe-install)
+		-s|--safe-install)
 			SAFE_INSTALL="1"
 			shift
+			;;
+		-O|--syslinux-opt)
+			SYSLINUX_OPT="$2"
+			shift 2
 			;;
 		-l|--label)
 			LABEL="$2"
