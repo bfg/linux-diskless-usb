@@ -23,6 +23,7 @@ Creates syslinux bootable USB key using *mkdiskimage*
 h1. HOWTO
 
 * create configuration file and edit it
+
 bc. 
 diskless-usb-save-os --default-config > /etc/linux-diskless/diskless-usb-save-os.conf
 vi /etc/linux-usb-diskless/diskless-usb-save-os.conf
