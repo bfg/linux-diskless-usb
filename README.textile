@@ -59,6 +59,50 @@ bc.
 bc. 
 diskless-usb-save-os -c /etc/linux-diskless/diskless-usb-save-os.conf
 
+h2. Adding System Rescue CD to list of boot images
+
+Here is a quick and dirty recipe for adding "System Rescue CD":http://www.sysresccd.org/
+to boot menu list:
+
+* download "System Rescue CD":http://sourceforge.net/projects/systemrescuecd/files/ ISO image
+* mount it
+bc. 
+sudo mount -o loop,ro /path/to/systemrescuecd-<arch>-<version>.iso /mnt/cdrom
+
+* mount your USB key
+bc. 
+sudo mount /dev/sdc4 /mnt/usbkey
+
+* create system rescue cd folder on usb key
+bc. 
+sudo mkdir /mnt/usbkey/sysrcd
+
+* copy system rescue cd files to usb key
+bc. 
+# kernels
+sudo cp /mnt/cdrom/isolinux/rescue{cd,64} /mnt/usbkey/sysrcd
+# initramfs
+sudo cp /mnt/cdrom/isolinux/initram.igz /mnt/usbkey/sysrcd
+# squashfs image
+sudo cp /mnt/cdrom/sysrcd.dat /mnt/usbkey
+
+* edit syslinux.cfg and add/uncomment system rescue cd section
+bc. 
+LABEL rescuecd32
+  MENU LABEL SystemRescueCd 32 bit
+  LINUX sysrscd/rescuecd
+  INITRD sysrscd/initram.igz
+  APPEND scandelay=1 nomodeset vga=791
+LABEL rescuecd64
+  MENU LABEL SystemRescueCd 64 bit
+  LINUX sysrscd/rescue64
+  INITRD sysrscd/initram.igz
+  APPEND scandelay=1 nomodeset vga=791
+
+* umount usb key and system rescue cd iso image
+bc. 
+sudo umount /mnt/usbkey
+sudo umount /mnt/cdrom
 
 h1. PACKAGES
 
