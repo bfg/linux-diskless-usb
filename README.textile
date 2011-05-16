@@ -90,13 +90,13 @@ sudo cp /mnt/cdrom/sysrcd.dat /mnt/usbkey
 bc. 
 LABEL rescuecd32
   MENU LABEL SystemRescueCd 32 bit
-  LINUX sysrscd/rescuecd
-  INITRD sysrscd/initram.igz
+  LINUX sysrcd/rescuecd
+  INITRD sysrcd/initram.igz
   APPEND scandelay=1 nomodeset vga=791
 LABEL rescuecd64
   MENU LABEL SystemRescueCd 64 bit
-  LINUX sysrscd/rescue64
-  INITRD sysrscd/initram.igz
+  LINUX sysrcd/rescue64
+  INITRD sysrcd/initram.igz
   APPEND scandelay=1 nomodeset vga=791
 
 * umount usb key and system rescue cd iso image
