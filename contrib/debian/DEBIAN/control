@@ -4,7 +4,7 @@ Section: base
 Priority: optional
 Architecture: all
 Depends: bash, perl, tar, gzip, coreutils, sed, awk
-Recommends: rsync, diffutils, syslinux
+Suggests: rsync, diffutils, syslinux
 Maintainer: bfg@frost.ath.cx
 Homepage: https://github.com/bfg/linux-usb-diskless
 Description: linux-usb-diskless: Helper scripts for Linux running in diskless mode.
