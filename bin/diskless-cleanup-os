@@ -1,0 +1,121 @@
+#!/bin/bash
+
+#
+# WHAT:   Debian/Ubuntu APT cleanup script
+# AUTHOR: Brane F. Gracnar
+#
+
+#######################################################
+#                     FUNCTIONS                       #
+#######################################################
+MYNAME=$(basename "$0")
+VERSION="0.10"
+DO_IT="0"
+
+# list of directories for removal
+DIRS=(
+	"/var/backups"
+	"/var/cache/"
+	"/var/lib/apt/lists"
+)
+
+FILES=(
+	"/var/log/*.[0-9]"
+	"/var/log/*.gz"
+)
+
+# list of directories for cleanup
+DIRS_RF=(
+
+)
+
+die() {
+	echo "ERROR: $@" 1>&2
+	exit 1
+}
+
+do_it() {
+	local dir=""
+	echo "Recursive remove:"
+	for dir in "${DIRS_RF[@]}"; do
+		test -z "$dir" && continue
+		test -d "${dir}" || continue
+		dir=$(readlink -f "${dir}")
+		test "$dir" = "/" -o "$dir" = "/root" -o "$dir" = "/etc" -o "$dir" = "/usr" -o "$dir" = "/var" -o "$dir" = "/home" -o && continue
+		
+		echo "  ${dir}"
+		if [ "${DO_IT}" = "1" ]; then
+			# rm -rf "${dir}" >/dev/null 2>&1
+			true
+		fi 
+	done
+
+	echo "Truncating directories:"
+	for dir in "${DIRS[@]}"; do
+		test -d "${dir}" || continue
+		echo "  ${dir}"
+		if [ "${DO_IT}" = "1" ]; then
+			find "${dir}" -type f | grep -Pv '\/lock$' | xargs -l100 rm -f >/dev/null 2>&1 
+		fi
+	done
+	
+	echo "Cleaning up files: "
+	for pattern in "${FILES[@]}"; do
+		echo "  ${pattern}"
+		if [ "${DO_IT}" = "1" ]; then
+			rm -f ${pattern} >/dev/null 2>&1
+		fi
+	done
+}
+
+printhelp() {
+	cat <<EOF
+Usage$: ${MYNAME} [OPTIONS]
+
+This script cleans up unneeded files on Debian/Ubuntu systems;
+usable if you're running Linux in diskless mode.
+
+OPTIONS:
+  -Y  --do-it              Do something :)
+  
+  -V  --version            Prints script version
+  -h  --help               This help message
+EOF
+}
+
+#######################################################
+#                        MAIN                         #
+#######################################################
+
+TEMP=$(getopt -o YVh --long do-it,version,help -n "$MYNAME" -- "$@")
+test "$?" != "0" && die "Command line parsing error."
+eval set -- "$TEMP"
+while true; do
+	case $1 in
+		-Y|do-it)
+			DO_IT="1"
+			shift
+			;;
+		-V|--version)
+			echo "$MYNAME $VERSION"
+			exit 0
+			;;
+		-h|--help)
+			printhelp
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		*)
+			echo "Invalid command line. Run $MYNAME --help for instructions" 1>&2
+			exit 1
+			;;
+	esac
+done
+
+do_it
+exit 0
+
+# EOF
