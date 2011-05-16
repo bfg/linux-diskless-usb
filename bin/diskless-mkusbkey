@@ -88,6 +88,7 @@ do_it() {
 	fi
 	msg_info "Device: ${dev}; heads: ${heads}, sectors: ${sectors}."
 	msg_info "Formatting device ${dev}: ${TERM_DGRAY}mkdiskimage -4 ${dev} 0 ${heads} ${sectors}${TERM_RESET}"
+	msg_warn "This may take some time (~ 5-6 minutes for 4GB USB key)"
 	mkdiskimage -4 "${dev}" 0 "${heads}" "${sectors}" || die "Unable to format USB key using mkdiskimage(8)."
 
 	# dev name is now changed
