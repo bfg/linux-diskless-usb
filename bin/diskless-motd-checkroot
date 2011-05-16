@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# SHELL color codes
+TERM_WHITE="\033[1;37m"
+TERM_YELLOW="\033[1;33m"
+TERM_LPURPLE="\033[1;35m"
+TERM_LRED="\033[1;31m"
+TERM_LCYAN="\033[1;36m"
+TERM_LGREEN="\033[1;32m"
+TERM_LBLUE="\033[1;34m"
+TERM_DGRAY="\033[1;30m"
+TERM_GRAY="\033[0;37m"
+TERM_BROWN="\033[0;33m"
+TERM_PURPLE="\033[0;35m"
+TERM_RED="\033[0;31m"
+TERM_CYAN="\033[0;36m"
+TERM_GREEN="\033[0;32m"
+TERM_BLUE="\033[0;34m"
+TERM_BLACK="\033[0;30m"
+TERM_BOLD="\033[40m\033[1;37m"
+TERM_RESET="\033[0m"
+
+motd_print() {
+	# are we running in diskless mode?
+	local fs=$(cat /proc/mounts  | grep ' / '  | tail -n 1 | awk '{print $1}')
+	if [ -z "${fs}" -o "${fs}" = "none" -o "${fs}" = "rootfs" -o "${fs}" = "tmpfs" -o "${fs}" = "ramfs" -o "${fs}" = "squashfs" ]; then
+		echo -e "${TERM_YELLOW}#####################################################${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#                  !!! WARNING !!!                  #${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#                                                   #${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#     This system is running in ${TERM_LRED}DISKLESS MODE${TERM_RESET}${TERM_YELLOW}!      #${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#                                                   #${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#                                                   #${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#${TERM_LGREEN}    If you make any filesystem related changes,    ${TERM_YELLOW}#${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#${TERM_LGREEN}   be shure to run ${TERM_LRED}diskless-usb-save-os${TERM_RESET}${TERM_LGREEN} script     ${TERM_YELLOW}#${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#${TERM_LGREEN}   if you want that filesystem related changes     ${TERM_YELLOW}#${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#${TERM_LGREEN}       to survive machine reset/poweroff!          ${TERM_YELLOW}#${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#                                                   #${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#####################################################${TERM_RESET}"
+		echo -e ""
+	fi
+}
+
+motd_print
