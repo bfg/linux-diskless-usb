@@ -179,6 +179,26 @@ DEFAULT linux-\${INDEX_FIRST}
 #	kernel kernels/vmlinuz-2.6.35-28.49-p9-01
 #	initrd kernels/initrd.igz
 #	append ro tmpfs_size=900M real_root=:/images/failback.tgz vga=791
+#
+######################################
+#      system rescue cd boot         #
+###################################### 
+#
+# NOTE: See README for complete instructions
+#       for booting system rescue cd images
+#       http://www.sysresccd.org/
+#
+#LABEL rescuecd32
+#  MENU LABEL SystemRescueCd 32 bit
+#  LINUX sysrscd/rescuecd
+#  INITRD sysrscd/initram.igz
+#  APPEND scandelay=1 nomodeset vga=791
+#
+#LABEL rescuecd64
+#  MENU LABEL SystemRescueCd 64 bit
+#  LINUX sysrscd/rescue64
+#  INITRD sysrscd/initram.igz
+#  APPEND scandelay=1 nomodeset vga=791
 
 ###### END: Boot labels ######
 
