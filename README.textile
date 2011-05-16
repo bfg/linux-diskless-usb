@@ -66,18 +66,22 @@ to boot menu list:
 
 * download "System Rescue CD":http://sourceforge.net/projects/systemrescuecd/files/ ISO image
 * mount it
+
 bc. 
 sudo mount -o loop,ro /path/to/systemrescuecd-<arch>-<version>.iso /mnt/cdrom
 
 * mount your USB key
+
 bc. 
 sudo mount /dev/sdc4 /mnt/usbkey
 
 * create system rescue cd folder on usb key
+
 bc. 
 sudo mkdir /mnt/usbkey/sysrcd
 
 * copy system rescue cd files to usb key
+
 bc. 
 # kernels
 sudo cp /mnt/cdrom/isolinux/rescue{cd,64} /mnt/usbkey/sysrcd
@@ -87,6 +91,7 @@ sudo cp /mnt/cdrom/isolinux/initram.igz /mnt/usbkey/sysrcd
 sudo cp /mnt/cdrom/sysrcd.dat /mnt/usbkey
 
 * edit syslinux.cfg and add/uncomment system rescue cd section
+
 bc. 
 LABEL rescuecd32
   MENU LABEL SystemRescueCd 32 bit
@@ -100,6 +105,7 @@ LABEL rescuecd64
   APPEND scandelay=1 nomodeset vga=791
 
 * umount usb key and system rescue cd iso image
+
 bc. 
 sudo umount /mnt/usbkey
 sudo umount /mnt/cdrom
