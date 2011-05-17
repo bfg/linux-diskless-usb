@@ -1,0 +1,210 @@
+#!/bin/bash
+
+#
+# WHAT: Lilo-bootable USBkey creation script
+# AUTHOR: Brane F. Gracnar
+#
+
+#######################################################
+#                     FUNCTIONS                       #
+#######################################################
+MYNAME=$(basename "$0")
+VERSION="0.10"
+DO_IT=0
+SAFE_INSTALL="0"
+SYSLINUX_OPT=""
+LABEL=""
+_MNT_DIR=
+
+msg_info() {
+	echo -e "${TERM_BOLD}INFO   :${TERM_RESET} $@ ${TERM_RESET}"
+}
+
+msg_warn() {
+	echo -e "${TERM_YELLOW}WARNING:${TERM_RESET} $@ ${TERM_RESET}"
+}
+
+msg_err() {
+	echo -e "${TERM_LRED}ERROR  :${TERM_RESET} $@ ${TERM_RESET}"
+}
+
+do_cleanup() {
+	if [ ! -z "${_MNT_DIR}" ]; then
+		umount "${_MNT_DIR}" >/dev/null 2>&1
+		rm -rf "${_MNT_DIR}"
+	fi	
+}
+
+tty_colors_init() {
+	# don't set color codes if we're not
+	# connected to tty...
+	test ! -t 1 -o ! -t 2 && return 0
+
+	# SHELL color codes
+	TERM_WHITE="\033[1;37m"
+	TERM_YELLOW="\033[1;33m"
+	TERM_LPURPLE="\033[1;35m"
+	TERM_LRED="\033[1;31m"
+	TERM_LCYAN="\033[1;36m"
+	TERM_LGREEN="\033[1;32m"
+	TERM_LBLUE="\033[1;34m"
+	TERM_DGRAY="\033[1;30m"
+	TERM_GRAY="\033[0;37m"
+	TERM_BROWN="\033[0;33m"
+	TERM_PURPLE="\033[0;35m"
+	TERM_RED="\033[0;31m"
+	TERM_CYAN="\033[0;36m"
+	TERM_GREEN="\033[0;32m"
+	TERM_BLUE="\033[0;34m"
+	TERM_BLACK="\033[0;30m"
+	TERM_BOLD="\033[40m\033[1;37m"
+	TERM_RESET="\033[0m"
+}
+
+die() {
+	msg_err "$@"
+	do_cleanup
+	exit 1
+}
+
+do_it() {
+	local dev="${1}"
+	
+	# create temporary directory
+	_MNT_DIR=$(mktemp -d 2>/dev/null)
+	test -z "${_MNT_DIR}" && die "Unable to create temporary directory."
+	
+	msg_info "Starting fdisk."
+	echo ""
+	msg_info "Create single partition, number 1, bootflag enabled, type linux."
+	echo
+	fdisk "${dev}" || die "Error running fdisk."
+	
+	# dev name is now changed
+	local fs_dev="${dev}1"
+	if [ ! -b "${fs_dev}" -o ! -w "${fs_dev}" ]; then
+		die "Device ${fs_dev} doesn't exist or is not writeable."
+	fi
+	
+	# format partition
+	msg_info "Formatting partition ${fs_dev} with ext3."
+	local opt=""
+	test ! -z "${LABEL}" && opt="-L ${LABEL}"
+	mkfs.ext3 ${opt} "${fs_dev}" || die "Unable to format partiton ${fs_dev} with etx3."
+
+	# mount device
+	mount "${fs_dev}" "${_MNT_DIR}" || die "Unable to mount device ${fs_dev} to ${_MNT_DIR}."
+	
+	# create directories
+	msg_info "Creating files and directories."
+	mkdir -p "${_MNT_DIR}/boot" "${_MNT_DIR}/dev" "${_MNT_DIR}/etc" "${_MNT_DIR}/tmp" "${_MNT_DIR}/os-images" || die "Unable to create USB key directories."
+	
+	# create devices
+	local make_dev=$(which MAKEDEV 2>/dev/null)
+	if [ ! -z "${make_dev}" -a -x "${make_dev}" ]; then
+		msg_info "Creating devices using MAKEDEV(8)."
+		( cd "${_MNT_DIR}/dev" && MAKEDEV generic >/dev/null 2>&1 ) || die "Unable to create devices using MAKEDEV."
+	else
+		msg_warn "MAKEDEV(8) not found on the system, copying /dev directory to usb key."
+		cp -ra /dev/* "${_MNT_DIR}/dev" || die "Unable to copy devices."
+	fi
+		
+	# create sample syslinux.cfg
+	msg_info "Creating sample lilo.conf"
+	diskless-usb-create-lilo-config -d /tmp > "${_MNT_DIR}/etc/lilo.conf"
+	
+	# umount
+	sync
+	umount "${_MNT_DIR}" >/dev/null 2>&1
+	
+	notice_ok
+	return 0
+}
+
+notice_ok() {
+	cat <<EOF
+
+Lilo bootable USB key creation done. You still need to:
+
+	* put your custom kernel to /boot directory
+	* put initrd/initramfs image to /boot directory
+	* put OS tarballs to /os-images directory
+	* edit /etc/lilo.conf
+
+	* install lilo bootloader:
+		mount /dev/sdc1 /mnt/usbkey
+		lilo -r /mnt/usbkey -b /dev/sdc
+
+EOF
+}
+
+printhelp() {
+	cat <<EOF
+Usage$: ${MYNAME} [OPTIONS] <device>
+
+This script creates lilo(8) bootable USB key.
+
+OPTIONS:
+  -l  --label=NAME         Set specified filesystem label
+  
+  -V  --version            Prints script version
+  -h  --help               This help message
+EOF
+}
+
+#######################################################
+#                        MAIN                         #
+#######################################################
+
+# PATH
+PATH=${PATH}:/sbin:/usr/sbin:/usr/local/sbin:$(dirname "$0")
+
+# initialize shell colors
+tty_colors_init
+
+TEMP=$(getopt -o l:Vh --long label:,do-it,version,help -n "$MYNAME" -- "$@")
+test "$?" != "0" && die "Command line parsing error."
+eval set -- "$TEMP"
+while true; do
+	case $1 in
+		-l|--label)
+			LABEL="$2"
+			shift 2
+			;;
+		--do-it)
+			DO_IT=1
+			shift
+			;;
+		-V|--version)
+			echo "$MYNAME $VERSION"
+			exit 0
+			;;
+		-h|--help)
+			printhelp
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		*)
+			echo "Invalid command line. Run $MYNAME --help for instructions" 1>&2
+			exit 1
+			;;
+	esac
+done
+
+# check device...
+dev="$1"
+test -z "${dev}" && die "Unspecified USB key block device."
+test ! -b "${dev}" -o ! -w "${dev}" && die "Invalid or unwriteable USB key block device: '${dev}'"
+
+# is this fucker really sure?
+if [ "${DO_IT}" != "1" ]; then
+	die "Are you really sure to destroy *ALL* data on ${dev}? If yes, run script with --do-it switch."
+fi
+
+do_it "${dev}"
+do_cleanup
+
+# EOF
