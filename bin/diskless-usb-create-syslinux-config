@@ -27,7 +27,7 @@ my $out = undef;
 #                     FUNCTIONS                       #
 #######################################################
 my $MYNAME = basename($0);
-my $VERSION = '0.10';
+my $VERSION = '0.11';
 my $Error = '';
 
 my $_template = template_cfg_default();
@@ -142,7 +142,7 @@ MENU color help     1;31;40    #FFFFFFFF #00000000 none
 
 ###### BEGIN: Defaults, timeouts ######
 
-# Available variables:
+# Available template variables:
 #
 # \${INDEX_FIRST}:     index of first computed label section
 # \${INDEX_LAST}:      index of last computed label section
@@ -251,19 +251,6 @@ sub template_label_get {
 	}
 
 	return join("\n", @tmp) . "\n";
-	
-	# menus disabled?
-	unless ($menu_enabled) {
-		my @tmp = ();
-		foreach (split(/[\r\n]/, $s)) {
-			next if ($_ =~ m/^\s*UI\s+/i);
-			next if ($_ =~ m/^\s*MENU\s+/i);
-			push(@tmp, $_);
-		}
-		$s = join("\n", @tmp) . "\n";
-	}
-	
-	return $s;
 }
 
 sub metadata_get {
