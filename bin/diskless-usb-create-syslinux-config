@@ -177,7 +177,7 @@ DEFAULT linux-\${INDEX_FIRST}
 # LABEL failback
 #	MENU LABEL Failback OS image
 #	kernel kernels/vmlinuz-2.6.35-28.49-p9-01
-#	initrd kernels/initrd.igz
+#	initrd kernels/init.igz
 #	append ro tmpfs_size=900M real_root=:/images/failback.tgz vga=791
 #
 ######################################
@@ -218,7 +218,7 @@ sub template_label_default {
 LABEL linux-\${INDEX}
 	MENU LABEL [\${INDEX}] OS \${ARCHIVE_FILE}
 	KERNEL kernels/vmlinuz-2.6.35-28.49
-	INITRD kernels/initrd.igz
+	INITRD kernels/init.igz
 	APPEND ro tmpfs_size=500M vga=791 real_root=:/os-images/\${ARCHIVE_FILE}
 EOF
 ;

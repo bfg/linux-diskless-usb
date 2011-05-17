@@ -152,7 +152,7 @@ default=\${TS_FIRST}
 # image=/boot/vmlinuz-2.6.35-28.49
 #	label=failback
 #	read-only
-#	initrd=/boot/initrd.igz
+#	initrd=/boot/init.igz
 #	append="panic=60 failback"
 
 ###### END: Boot labels ######
@@ -174,7 +174,7 @@ sub template_label_default {
 image=/boot/vmlinuz-2.6.35-28.49
 	label=\${ARCHIVE_TS}
 	read-only
-	initrd=/boot/initrd.igz
+	initrd=/boot/init.igz
 	append="tmpfs_size=500M real_root=:/os-images/\${ARCHIVE_FILE}"
 
 EOF
