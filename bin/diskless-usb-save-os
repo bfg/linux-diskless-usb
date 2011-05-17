@@ -80,6 +80,13 @@ ARCHIVE_MAX_NUM="8"
 # Type: string
 # Default: ""
 ARCHIVE_BACKUP_LOC=""
+
+# Bootloader selection
+#
+# Available values: syslinux, lilo
+# Type: string
+# Default: "syslinux"
+BOOTLOADER="syslinux"
  
 ############################################################
 
@@ -121,6 +128,44 @@ SYSLINUX_GENERATOR_OPT=""
 
 ############################################################
 
+##########   LILO BOOTLOADER CONFIGURATION    ##########
+
+# lilo.conf configuration path on USB key
+#
+# Type: string
+# Default: "/etc/lilo.conf"
+LILO_CONFIG="/etc/lilo.conf"
+
+# Path to syslinux.cfg template file
+#
+# NOTE: Run diskless-usb-create-lilo-config --help
+#       for instructions.
+#
+# Type: string
+# Default: "/etc/linux-diskless/lilo.conf.template"
+LILO_TEMPLATE_CONFIG="/etc/linux-diskless/lilo.conf.template"
+
+# Path to syslinux LABEL section template file
+#
+# NOTE: Run diskless-usb-create-lilo-config --help
+#       for instructions.
+#
+# Type: string
+# Default: "/etc/linux-diskless/lilo-label.template"
+LILO_TEMPLATE_LABEL="/etc/linux-diskless/lilo-label.template"
+
+# Additional diskless-usb-create-lilo-config command
+# line options.
+# 
+# NOTE: Run diskless-usb-create-lilo-config --help
+#       for instructions.
+#
+# Type: string
+# Default: ""
+LILO_GENERATOR_OPT=""
+
+############################################################
+
 # I'm fucking sure mode (--yes command line option)
 #
 # When this setting is set to "yes", script
@@ -140,20 +185,23 @@ YES="no"
 #                     FUNCTIONS                       #
 #######################################################
 MYNAME=$(basename "$0")
-VERSION="0.17"
+VERSION="0.20"
 ARCHIVE_ID=""
 REAL_ARCHIVE_NAME=""
 HOSTNAME=$(hostname)
 TIMESTAMP=""
+BOOTLOADER_ONLY="0"
 
 # default config file
 _CONFIG_DEFAULT="/etc/linux-diskless/${MYNAME}.conf"
 
-# existing syslinux.cfg backup
+# syslinux configuration backup and newly generated file
 _SYSLINUX_CFG_BACKUP=""
-
-# newly generated syslinux.cfg
 _SYSLINUX_CFG_NEW=""
+
+# lilo configuration backup and new newly generated file
+_LILO_CFG_BACKUP=""
+_LILO_CFG_NEW=""
 
 # flags
 _CANCEL=0
@@ -183,39 +231,6 @@ tty_colors_init() {
 	TERM_BLACK="\033[0;30m"
 	TERM_BOLD="\033[40m\033[1;37m"
 	TERM_RESET="\033[0m"
-}
-
-is_sure() {
-	if [ "${SURE}" = "1" ]; then
-		# msg_warn "\$SURE is set to YES, returning success."
-		return 0
-	fi
-	
-	# not connected to tty? fuck...
-	if [ ! -t 1 -o ! -t 2 ]; then
-		die "Not connected to TTY, \$SURE is not set and --yes command line option is not used; unable to continue."
-	fi	
-
-	local default="$1"
-	local yn_str=""
-	test -z "${default}" && default=1
-	if [ "${default}" = "0" ]; then
-		yn_str="Y/n"
-	else
-		yn_str="y/N"
-	fi
-
-	local r=""
-	echo -ne "${TERM_YELLOW}WARNING:${TERM_RESET} Are you sure? [${yn_str}]: "
-	read r
-
-	if [ -z "${r}" ]; then
-		return ${default}
-	elif [ "${r}" = "y" -o "${r}" = "Y" ]; then
-		return 0
-	else
-		return 1
-	fi
 }
 
 bool_question() {
@@ -304,16 +319,13 @@ die() {
 do_cleanup() {
 	# umount mount directory...
 	test "${_MOUNT_OK}" = "1" && fs_umount "${MNT_DIR}"
-	
-	# old syslinux config?
-	if [ ! -z "${_SYSLINUX_CFG_BACKUP}" -a -f "${_SYSLINUX_CFG_BACKUP}" ]; then
-		rm -f "${_SYSLINUX_CFG_BACKUP}" >/dev/null 2>&1
-	fi
 
-	# new syslinux config?
-	if [ ! -z "${_SYSLINUX_CFG_NEW}" -a -f "${_SYSLINUX_CFG_NEW}" ]; then
-		rm -f "${_SYSLINUX_CFG_NEW}" >/dev/null 2>&1
-	fi
+	# files
+	local f=""
+	for f in "${_SYSLINUX_CFG_BACKUP}" "${_SYSLINUX_CFG_NEW}" "${_LILO_CFG_BACKUP}" "${_LILO_CFG_NEW}"; do
+		test -z "${f}" -o ! -r "${f}" && continue
+		rm -f "${f}" >/dev/null 2>&1
+	done
 
 	return 0
 }
@@ -323,8 +335,7 @@ printhelp() {
 Usage$: ${MYNAME} [OPTIONS]
 
 This script creates FULL operating system backup as
-gzipped tar archive and updates syslinux bootloader
-configuration.
+gzipped tar archive and updates bootloader configuration.
 
 OPTIONS:
 
@@ -332,6 +343,8 @@ OPTIONS:
                            (Default: "${_CONFIG_DEFAULT}")
   -d  --default-config     Prints default configuration file
   
+
+      --bootloader-only    Only update bootloader configuration.
   -Y  --yes                Answer yes to all questions (Default: ${YES})
 
   -V  --version            Prints script version
@@ -352,7 +365,7 @@ config_load() {
 }
 
 config_default_print() {
-	cat $0 | head -n 137 | tail -n 130 | sed -re 's/^([A-Z]+.*)/# \1/g'
+	cat $0 | head -n 180 | tail -n 173 | sed -re 's/^([A-Z]+.*)/# \1/g'
 	echo "ive_been_lazy_and_ihavent_edited_default_config_file"
 	echo ""
 	echo "# EOF"
@@ -505,11 +518,13 @@ archive_backup_remote() {
 	local files=$(sanitize_path "${MNT_DIR}/${ARCHIVE_DIR}")
 	files="${files}/*.${ts}*"
 	
-	# sylinux.cfg backup?
+	# sylinux.cfg configurations?
 	test -f "${_SYSLINUX_CFG_BACKUP}" && files="${files} ${_SYSLINUX_CFG_BACKUP}"
-
-	# new syslinux.cfg?
 	test -f "${_SYSLINUX_CFG_NEW}" && files="${files} ${_SYSLINUX_CFG_NEW}"
+
+	# lilo configurations?
+	test -f "${_LILO_CFG_BACKUP}" && files="${files} ${_LILO_CFG_BACKUP}"
+	test -f "${_LILO_CFG_NEW}" && files="${files} ${_LILO_CFG_NEW}"
 
 	# send to all backup destinations
 	local loc=""
@@ -570,6 +585,76 @@ archive_create() {
 }
 
 bootloader_update() {
+	# compute bootloader update function name and run it...
+	bootloader_update_${BOOTLOADER} || die "Error updating ${BOOTLOADER} configuration."
+}
+
+bootloader_update_lilo() {
+	echo ""
+	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#       UPDATING LILO BOOTLOADER CONFIGURATION        #${TERM_RESET}"
+	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
+	echo ""
+
+	local lilo_cfg=$(sanitize_path "${MNT_DIR}/${LILO_CONFIG}")
+	
+	_LILO_CFG_NEW="/tmp/syslinux.cfg.${TIMESTAMP}.new"
+	
+	# create existing configuration backup
+	_LILO_CFG_BACKUP=""
+	if [ -f "${lilo_cfg}" -a -r "${lilo_cfg}" ]; then
+		 _LILO_CFG_BACKUP="/tmp/lilo.conf.${TIMESTAMP}.backup"
+		 cp -f "${lilo_cfg}" "${_LILO_CFG_BACKUP}" || die "Unable to backup existing lilo configuration."
+	else
+		msg_warn "lilo configuration not found: ${lilo_cfg}"
+		rm -f "${lilo_cfg}" >/dev/null 2>&1
+	fi
+	
+	# compute generator opt
+	local opt=""
+	
+	# syslinux.cfg.template?
+	test ! -z "${LILO_TEMPLATE_CONFIG}" && opt="${opt} -t ${LILO_TEMPLATE_CONFIG}"
+	
+	# syslinux-label.template?
+	test ! -z "${LILO_TEMPLATE_LABEL}" && opt="${opt} -l ${LILO_TEMPLATE_LABEL}"
+	
+	# additional generator options?
+	test ! -z "${LILO_GENERATOR_OPT}" && opt="${opt} ${LILO_GENERATOR_OPT}"
+ 
+	# run lilo configuration generator script
+	diskless-usb-create-lilo-config ${opt} -o "${_LILO_CFG_NEW}" || die "Error creating syslinux configuration."
+	
+	# show diff
+	if [ ! -z "${_LILO_CFG_BACKUP}" ]; then
+		if ! bool_get "${YES}" && bool_question "Show diff between old and new ${LILO_CONFIG}?" n; then
+			diff -u "${_LILO_CFG_BACKUP}" "${_LILO_CFG_NEW}"
+			echo ""
+		fi
+	fi
+	
+	# install lilo configuration
+	bool_question "Install new version of lilo configuration?" "n" || die "Aborted by user."
+	msg_info "Installing new lilo configuration: ${lilo_cfg_tmp} => ${lilo_cfg}."
+	cp -f "${_LILO_CFG_NEW}" "${lilo_cfg}" || die "Unable to install lilo configuration file."
+
+	# compute lilo install device
+	lilo_dev="${USBKEY_DEV}"
+	if echo "${lilo_dev}" | grep -qP '\/dev\/[hs]d[a-z][1-9]$'; then
+		lilo_dev=$(echo "${lilo_dev}" | sed -e 's/[1-9]$//g')
+	fi
+
+	# re-install lilo bootloader
+	msg_info "Re-installing lilo to ${TERM_BOLD}${lilo_dev}${TERM_RESET}: ${TERM_DGRAY}lilo -r ${MNT_DIR} -C ${LILO_CONFIG} -b ${lilo_dev}${TERM_RESET}"
+	lilo -r "${MNT_DIR}" -C "${LILO_CONFIG}" -b "${lilo_dev}" || die "Unable to re-install lilo."
+	
+	msg_info "lilo bootloader configuration successfully updated."
+	echo "" 
+
+	return 0
+}
+
+bootloader_update_syslinux() {
 	echo ""
 	echo -e "${TERM_DGRAY}#######################################################${TERM_RESET}"
 	echo -e "${TERM_DGRAY}#     UPDATING SYSLINUX BOOTLOADER CONFIGURATION      #${TERM_RESET}"
@@ -618,7 +703,7 @@ bootloader_update() {
 	msg_info "Installing new syslinux configuration: ${syslinux_cfg_tmp} => ${syslinux_cfg}."
 	cp -f "${_SYSLINUX_CFG_NEW}" "${syslinux_cfg}" || die "Unable to install syslinux configuration file."
 	
-	msg_info "Syslinux bootloader configuration updated."
+	msg_info "Syslinux bootloader configuration successfully updated."
 	echo "" 
 
 	return 0
@@ -650,17 +735,21 @@ run_it() {
 	fs_mount "${USBKEY_DEV}" "${MNT_DIR}" || die
 	_MOUNT_OK=1
 	
-	# perform archive directory cleanup 
-	archive_cleanup "${MNT_DIR}/${ARCHIVE_DIR}" "${ARCHIVE_NAME}"
+	if [ "${BOOTLOADER_ONLY}" != "1" ]; then
+		# perform archive directory cleanup 
+		archive_cleanup "${MNT_DIR}/${ARCHIVE_DIR}" "${ARCHIVE_NAME}"
 
-	# create OS backup
-	archive_create
+		# create OS backup
+		archive_create
+	fi
 	
 	# update boot loader configuration
 	bootloader_update
-	
-	# send stuff to remote locations...
-	archive_backup_remote "${TIMESTAMP}"
+
+	if [ "${BOOTLOADER_ONLY}" != "1" ]; then
+		# send stuff to remote locations...
+		archive_backup_remote "${TIMESTAMP}"
+	fi
 
 	# cleanup the mess
 	do_cleanup
@@ -689,7 +778,7 @@ tty_colors_init
 config_load "${_CONFIG_DEFAULT}"
 Error=""
 
-TEMP=$(getopt -o c:dYVh --long config:,default-config,yes,version,help -n "$MYNAME" -- "$@")
+TEMP=$(getopt -o c:dYVh --long config:,default-config,bootloader-only,yes,version,help -n "$MYNAME" -- "$@")
 test "$?" != "0" && die "Command line parsing error."
 eval set -- "$TEMP"
 while true; do
@@ -701,6 +790,10 @@ while true; do
 		-d|--default-config)
 			config_default_print
 			exit 0
+			;;
+		--bootloader-only)
+			BOOTLOADER_ONLY=1
+			shift
 			;;
 		-Y|--yes)
 			SURE=1
