@@ -118,7 +118,7 @@ sub template_cfg_default {
 prompt
 
 # boot timeout is 10 seconds
-timeout = 10
+timeout = 100
 
 # Override dangerous defaults
 # that rewrite the partition table:
@@ -425,6 +425,7 @@ sub run {
 	my $metadata = metadata_get();
 
 	my @tmp = ();
+	no warnings;
 	foreach (split(/[\r\n]/, template_cfg_get())) {
 		# do rewrites on non-comment lines...
 		unless ($_ =~ m/^\s*#/) {
