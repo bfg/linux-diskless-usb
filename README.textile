@@ -17,10 +17,17 @@ updates syslinux configuration using *diskless-usb-create-syslinux-config*
 Creates/generates syslinux.cfg configuration from discovered
 list of operating system tarballs created by *diskless-usb-save-os*
 
-* *diskless-mkusbkey*
+* *diskless-usb-create-lilo-config*
+Creates/generates lilo(8) bootloader configuration from discovered
+list of operating system tarballs created by *diskless-usb-save-os*
+
+* *diskless-mkusbkey-syslinux*
 Creates syslinux bootable USB key using *mkdiskimage*
 
-h1. HOWTO
+* *diskless-mkusbkey-lilo*
+Creates lilo(8) bootables USB key
+
+h1. HOWTO [SYSLINUX]
 
 * create configuration file and edit it
 
