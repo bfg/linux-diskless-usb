@@ -1,0 +1,247 @@
+#!/bin/bash
+
+#
+# WHAT: Bootable USBkey creation script
+# AUTHOR: Brane F. Gracnar
+#
+
+#######################################################
+#                     FUNCTIONS                       #
+#######################################################
+MYNAME=$(basename "$0")
+VERSION="0.10"
+DO_IT=0
+SAFE_INSTALL="0"
+SYSLINUX_OPT=""
+LABEL=""
+_MNT_DIR=
+
+msg_info() {
+	echo -e "${TERM_BOLD}INFO   :${TERM_RESET} $@ ${TERM_RESET}"
+}
+
+msg_warn() {
+	echo -e "${TERM_YELLOW}WARNING:${TERM_RESET} $@ ${TERM_RESET}"
+}
+
+msg_err() {
+	echo -e "${TERM_LRED}ERROR  :${TERM_RESET} $@ ${TERM_RESET}"
+}
+
+do_cleanup() {
+	if [ ! -z "${_MNT_DIR}" ]; then
+		umount "${_MNT_DIR}" >/dev/null 2>&1
+		rm -rf "${_MNT_DIR}"
+	fi	
+}
+
+tty_colors_init() {
+	# don't set color codes if we're not
+	# connected to tty...
+	test ! -t 1 -o ! -t 2 && return 0
+
+	# SHELL color codes
+	TERM_WHITE="\033[1;37m"
+	TERM_YELLOW="\033[1;33m"
+	TERM_LPURPLE="\033[1;35m"
+	TERM_LRED="\033[1;31m"
+	TERM_LCYAN="\033[1;36m"
+	TERM_LGREEN="\033[1;32m"
+	TERM_LBLUE="\033[1;34m"
+	TERM_DGRAY="\033[1;30m"
+	TERM_GRAY="\033[0;37m"
+	TERM_BROWN="\033[0;33m"
+	TERM_PURPLE="\033[0;35m"
+	TERM_RED="\033[0;31m"
+	TERM_CYAN="\033[0;36m"
+	TERM_GREEN="\033[0;32m"
+	TERM_BLUE="\033[0;34m"
+	TERM_BLACK="\033[0;30m"
+	TERM_BOLD="\033[40m\033[1;37m"
+	TERM_RESET="\033[0m"
+}
+
+die() {
+	msg_err "$@"
+	do_cleanup
+	exit 1
+}
+
+do_it() {
+	local dev="${1}"
+	
+	# create temporary directory
+	_MNT_DIR=$(mktemp -d 2>/dev/null)
+	test -z "${_MNT_DIR}" && die "Unable to create temporary directory."
+	
+	# get stuff
+	local data=$(fdisk -l "${dev}" | grep 'heads,' | grep 'track,')
+	if [ -z "${data}" ]; then
+		die "fdisk(8) didn't report head/sector data."
+	fi
+
+	# 114 heads, 49 sectors/track, 47 cylinders, total 268079 sectors
+	heads=$(echo "${data}" | awk '{print $1}')
+	sectors=$(echo "${data}" | awk '{print $3}')
+	if [ -z "${heads}" -o ${heads} -lt 1 -o -z "${sectors}" -o ${sectors} -lt 1 ]; then
+		die "Invalid fdisk head/sector data for device ${dev}: ${data}"
+	fi
+	msg_info "Device: ${dev}; heads: ${heads}, sectors: ${sectors}."
+	msg_info "Formatting device ${dev}: ${TERM_DGRAY}mkdiskimage -4 ${dev} 0 ${heads} ${sectors}${TERM_RESET}"
+	msg_warn "This may take some time (~ 5-6 minutes for 4GB USB key)"
+	mkdiskimage -4 "${dev}" 0 "${heads}" "${sectors}" || die "Unable to format USB key using mkdiskimage(8)."
+
+	# dev name is now changed
+	local fs_dev="${dev}4"
+	
+	# install syslinux
+	local opt=""
+	test "${SAFE_INSTALL}" = "1" && opt="-s"
+	test ! -z "${SYSLINUX_OPT}" && opt="${opt} ${SYSLINUX_OPT}"
+	msg_info "Installing syslinux bootloader: ${TERM_DGRAY}syslinux ${opt} ${fs_dev}${TERM_RESET}"
+	syslinux ${opt} "${fs_dev}" || die "Unable to install syslinux on created USB key."
+	
+	# mount device
+	mount "${fs_dev}" "${_MNT_DIR}" || die "Unable to mount device ${fs_dev} to ${_MNT_DIR}."
+	
+	# create directories
+	msg_info "Creating files and directories."
+	mkdir -p "${_MNT_DIR}/syslinux" "${_MNT_DIR}/kernels" "${_MNT_DIR}/os-images" || die "Unable to create USB key directories."
+	
+	# copy syslinux stuff...
+	local dir=""
+	local ok=0
+	for dir in /usr/{lib,share}/syslinux /usr/local/{lib,share}/syslinux; do
+		test -d "${dir}" || continue
+		test -f "${dir}/vesamenu.c32" || continue
+		cp "${dir}/vesamenu.c32" "${_MNT_DIR}/syslinux" || die "Unable to install syslinux vesamenu.c32"
+		ok=1
+	done
+	if [ "${ok}" != "1" ]; then
+		die "Unable to find syslinux vesamenu.c32 on the system."
+	fi
+	
+	# create sample syslinux.cfg
+	msg_info "Creating sample syslinux.cfg"
+	diskless-usb-create-syslinux-config -d /tmp > "${_MNT_DIR}/syslinux.cfg"
+	
+	# umount
+	umount "${_MNT_DIR}" >/dev/null 2>&1
+	
+	# set label...
+	if [ ! -z "${LABEL}" ]; then
+		msg_info "Setting filesystem label: ${TERM_DGRAY}mlabel -i ${fs_dev} ::${LABEL}${TERM_RESET}"
+		mlabel -i "${fs_dev}" ::"${LABEL}" >/dev/null 2>&1
+	fi
+	
+	notice_ok
+
+	return 0
+}
+
+notice_ok() {
+	cat <<EOF
+
+Syslinux bootable USB key creation done. You still need to:
+
+	* put your custom kernel to /kernels directory
+	* put initramfs image to /kernels directory
+	* optionaly put OS tarballs to /os-images directory
+	* edit /syslinux.cfg
+
+EOF
+}
+
+printhelp() {
+	cat <<EOF
+Usage$: ${MYNAME} [OPTIONS] <device>
+
+This script creates syslinux bootable USB key.
+
+OPTIONS:
+  -s  --safe-install       Safe syslinux install
+  -O  --syslinux-opt="OPT" Additional command line options for syslinux(1)
+                           (Default: "${SYSLINUX_OPT}")
+  
+  -l  --label=NAME         Set specified filesystem label
+  
+  -V  --version            Prints script version
+  -h  --help               This help message
+
+EXAMPLES:
+
+ # Create bootable usbkey (device: /dev/sdc)
+ # with custom filesystem label
+ $MYNAME -l MY_USBKEY /dev/sdc
+ 
+ # Create bootable usbkey (device: /dev/sdc)
+ # with syslinux configuration in /syslinux directory
+ # and custom filesystem label
+ $MYNAME -l MY_USBKEY -O "-d syslinux" /dev/sdc
+EOF
+}
+
+#######################################################
+#                        MAIN                         #
+#######################################################
+
+# PATH
+PATH=${PATH}:/sbin:/usr/sbin:/usr/local/sbin:$(dirname "$0")
+
+# initialize shell colors
+tty_colors_init
+
+TEMP=$(getopt -o sO:l:Vh --long safe-install,syslinux-opt:,label:,do-it,version,help -n "$MYNAME" -- "$@")
+test "$?" != "0" && die "Command line parsing error."
+eval set -- "$TEMP"
+while true; do
+	case $1 in
+		-s|--safe-install)
+			SAFE_INSTALL="1"
+			shift
+			;;
+		-O|--syslinux-opt)
+			SYSLINUX_OPT="$2"
+			shift 2
+			;;
+		-l|--label)
+			LABEL="$2"
+			shift 2
+			;;
+		--do-it)
+			DO_IT=1
+			shift
+			;;
+		-V|--version)
+			echo "$MYNAME $VERSION"
+			exit 0
+			;;
+		-h|--help)
+			printhelp
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		*)
+			echo "Invalid command line. Run $MYNAME --help for instructions" 1>&2
+			exit 1
+			;;
+	esac
+done
+
+# check device...
+dev="$1"
+test -z "${dev}" && die "Unspecified USB key block device."
+test ! -b "${dev}" -o ! -w "${dev}" && die "Invalid or unwriteable USB key block device: '${dev}'"
+
+# is this fucker really sure?
+if [ "${DO_IT}" != "1" ]; then
+	die "Are you really sure to destroy *ALL* data on ${dev}? If yes, run script with --do-it switch."
+fi
+
+do_it "${dev}"
+do_cleanup
+
+# EOF
