@@ -185,7 +185,7 @@ YES="no"
 #                     FUNCTIONS                       #
 #######################################################
 MYNAME=$(basename "$0")
-VERSION="0.20"
+VERSION="0.22"
 ARCHIVE_ID=""
 REAL_ARCHIVE_NAME=""
 HOSTNAME=$(hostname)
