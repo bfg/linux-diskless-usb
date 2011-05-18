@@ -31,7 +31,7 @@ motd_print() {
 		echo -e "${TERM_YELLOW}#                                                   #${TERM_RESET}"
 		echo -e "${TERM_YELLOW}#                                                   #${TERM_RESET}"
 		echo -e "${TERM_YELLOW}#${TERM_LGREEN}    If you make any filesystem related changes,    ${TERM_YELLOW}#${TERM_RESET}"
-		echo -e "${TERM_YELLOW}#${TERM_LGREEN}   be shure to run ${TERM_LRED}diskless-usb-save-os${TERM_RESET}${TERM_LGREEN} script     ${TERM_YELLOW}#${TERM_RESET}"
+		echo -e "${TERM_YELLOW}#${TERM_LGREEN}   be sure  to run ${TERM_LRED}diskless-usb-save-os${TERM_RESET}${TERM_LGREEN} script     ${TERM_YELLOW}#${TERM_RESET}"
 		echo -e "${TERM_YELLOW}#${TERM_LGREEN}   if you want that filesystem related changes     ${TERM_YELLOW}#${TERM_RESET}"
 		echo -e "${TERM_YELLOW}#${TERM_LGREEN}       to survive machine reset/poweroff!          ${TERM_YELLOW}#${TERM_RESET}"
 		echo -e "${TERM_YELLOW}#                                                   #${TERM_RESET}"
